@@ -185,3 +185,16 @@ def test_ingest_reports_unchanged_and_force_reembeds(client):
     assert ingest(client, text=POLICY).json()["documents"][0]["unchanged"] is False
     assert ingest(client, text=POLICY).json()["documents"][0]["unchanged"] is True
     assert ingest(client, text=POLICY, force=True).json()["documents"][0]["unchanged"] is False
+
+
+def test_list_documents_is_tenant_scoped_and_shows_acl_docs(client):
+    ingest(client, text=POLICY)
+    ingest(client, doc_id="secret.txt", text="Plan reservado.", acl=["legal"])
+    docs = client.get("/documents", headers=H).json()["documents"]
+    assert [d["doc_id"] for d in docs] == ["policy.md", "secret.txt"]
+    sec = docs[1]
+    assert sec["acl"] == ["legal"] and sec["parents"] == 1 and sec["chars"] == len("Plan reservado.") and len(sec["doc_hash"]) == 64
+    assert client.get("/documents", headers={"X-Tenant": "rival"}).json()["documents"] == []
+    client.delete("/documents/policy.md", headers=H)
+    assert [d["doc_id"] for d in client.get("/documents", headers=H).json()["documents"]] == ["secret.txt"]
+    assert client.get("/documents").status_code == 400

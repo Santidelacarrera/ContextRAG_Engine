@@ -114,3 +114,18 @@ def eval_rag(make_rag: Callable[[], ContextRAG], data: dict | None = None, tenan
         len(data["cases"]), ans / n_ans if n_ans else 1.0, cor / n_ans if n_ans else 1.0,
         abst / n_un if n_un else 1.0, len(unsafe) / len(data["cases"]), hits / n_ans if n_ans else 1.0,
         sum(rr) / len(rr) if rr else 0.0, unsafe, failures)
+
+
+def sweep_thresholds(nli: NLIModel, cases: list[dict] | None = None,
+                     thresholds: tuple[float, ...] = (0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 0.97, 0.99)) -> dict:
+    """False-support rate and recall at each threshold, plus the *lowest* threshold with zero false supports
+    (``None`` if even the highest one lets a false claim through). Calibrate this on your own labelled data."""
+    cases = cases if cases is not None else load_json("verifier_cases.json")
+    scored = [(verify_attribution(c["claim"], [c["premise"]], nli), c["label"] == "supported") for c in cases]
+    pos = sum(ok for _, ok in scored)
+    neg = len(scored) - pos
+    rows = [{"threshold": t,
+             "false_support_rate": sum(s >= t and not ok for s, ok in scored) / neg if neg else 0.0,
+             "recall": sum(s >= t and ok for s, ok in scored) / pos if pos else 1.0} for t in sorted(thresholds)]
+    safe = [r["threshold"] for r in rows if r["false_support_rate"] == 0.0]
+    return {"rows": rows, "recommended": safe[0] if safe else None}

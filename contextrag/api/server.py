@@ -161,6 +161,11 @@ def create_app(rag: ContextRAG | None = None, keystore: KeyStore | None = None,
         get_rag().ingestor.delete(tenant=c.tenant, doc_id=doc_id)
         return {"tenant": c.tenant, "deleted": doc_id}
 
+    @app.get("/documents")
+    def list_documents(c: Caller = Depends(caller_for("list"))):
+        """Indexed documents of the tenant (including ACL-restricted ones: this is an admin view)."""
+        return {"tenant": c.tenant, "documents": get_rag().index.list_documents(c.tenant)}
+
     @app.get("/metrics")
     def metrics(_: Caller = Depends(caller_for("metrics"))):
         return PlainTextResponse(get_rag().metrics_text(), media_type="text/plain; version=0.0.4")

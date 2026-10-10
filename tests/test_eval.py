@@ -47,3 +47,38 @@ def _rag(llm, nli):
     rag.verifier.nli = nli
     rag.reranker = type("NoFloor", (), {"score": lambda self, q, ps: [1.0] * len(ps)})()  # disable relevance gate
     return rag
+
+
+def test_threshold_sweep_recommends_lowest_safe_threshold():
+    from contextrag.eval.harness import sweep_thresholds
+
+    class Graded:  # a "semantic" model whose scores overlap: false claims reach up to 0.93, true ones from 0.9
+        table = {"bad": 0.93, "ok": 0.97}
+
+        def entailment(self, pairs):
+            return [self.table["ok" if p.endswith("(ok)") else "bad"] for p, _ in pairs]
+
+    cases = [{"id": "1", "label": "supported", "category": "c", "premise": "x (ok)", "claim": "x."},
+             {"id": "2", "label": "unsupported", "category": "c", "premise": "y (bad)", "claim": "y."}]
+    out = sweep_thresholds(Graded(), cases, thresholds=(0.9, 0.95, 0.99))
+    rows = {r["threshold"]: r for r in out["rows"]}
+    assert rows[0.9]["false_support_rate"] == 1.0 and rows[0.95]["false_support_rate"] == 0.0
+    assert rows[0.95]["recall"] == 1.0 and rows[0.99]["recall"] == 0.0
+    assert out["recommended"] == 0.95
+    assert sweep_thresholds(type("A", (), {"entailment": lambda s, p: [1.0] * len(p)})(), cases)["recommended"] is None
+
+
+def test_cli_eval_sweep(capsys):
+    import json
+
+    from contextrag.__main__ import main
+
+    assert main(["eval", "--sweep", "--json"]) == 0
+    sweep = json.loads(capsys.readouterr().out)["sweep"]
+    rows = {r["threshold"]: r for r in sweep["rows"]}
+    assert rows[0.5]["false_support_rate"] > 0  # permissive thresholds let partially-supported claims through
+    assert rows[0.95]["false_support_rate"] == 0 and rows[0.95]["recall"] == 1.0
+    rec = sweep["recommended"]
+    assert rec is not None and rec <= 0.95 and rows[rec]["false_support_rate"] == 0
+    assert all(rows[t]["false_support_rate"] > 0 for t in rows if t < rec)  # and it is the lowest such threshold
+    assert main(["eval", "--sweep"]) == 0 and "recommended threshold" in capsys.readouterr().out

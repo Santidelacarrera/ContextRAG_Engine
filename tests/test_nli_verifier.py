@@ -149,3 +149,25 @@ def test_deberta_wrapper_is_importable_and_requires_extras():
     pytest.importorskip("transformers")
     pytest.importorskip("torch")
     assert DebertaNLI  # model weights are not downloaded in CI
+
+
+def test_evidence_is_the_window_most_similar_to_the_claim_even_when_nli_scores_saturate():
+    class Saturated:  # a model that is ~certain about everything: every window "entails" the claim
+        def entailment(self, pairs):
+            return [0.9999] * len(pairs)
+
+    text = "Retención de datos. Los registros de auditoría se conservan durante 7 años. Fin."
+    [v] = NLIVerifier(Saturated()).verify("Los registros de auditoría se conservan durante 7 años. [1]", [ctx(text)])
+    assert v.supported and v.evidence.text == "Los registros de auditoría se conservan durante 7 años."
+
+
+def test_evidence_choice_never_changes_the_support_decision():
+    class Graded:  # high score only for windows containing "siete"; everything else just below the threshold
+        def entailment(self, pairs):
+            return [0.99 if "siete" in p else 0.9 for p, _ in pairs]
+
+    c = ctx("Hay siete cosas. Otra frase. Y una más.")
+    [ok] = NLIVerifier(Graded()).verify("Hay siete cosas. [1]", [c])
+    assert ok.supported and "siete" in ok.evidence.text and ok.score == 0.99
+    [bad] = NLIVerifier(Graded()).verify("Otra frase. [1]", [ctx("Otra frase. Y una más.")])
+    assert not bad.supported and bad.evidence is None and bad.score == 0.9

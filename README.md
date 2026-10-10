@@ -9,7 +9,7 @@ con feedback y, si sigue sin verificarse, se devuelve una respuesta de contingen
 /ingest ─► parser (PDF · Markdown · código · texto) ─► padres (1024 tok) ─► hijos (256 tok, solape 32)
                                                                         │
                                            hijos → embeddings → Qdrant (denso) ─┐
-                                           hijos → rank_bm25 (disperso)         ├─► RRF ─► reranker ─► padres top-K
+                                           hijos → BM25 (rank_bm25)  (disperso) ├─► RRF ─► reranker ─► padres top-K
 /query  ───────────────────────────────────────────────────────────────────────┘                     │
                                                                                                       ▼
    ┌─ confianza ≥ 0.95 en TODAS las afirmaciones ◄── NLI (DeBERTa-v3 | heurístico) ◄── LLM con citas [n]
@@ -24,17 +24,18 @@ respuesta auditada (+ coordenadas exactas doc/offset/página)      si no:  "No s
 | Ruta | Contenido |
 |---|---|
 | `contextrag/core/chunking.py` | Parsers estructurales (Markdown con ruta de encabezados y bloques de código intactos, código por definiciones, texto por párrafos) y chunking padre/hijo medido en **tokens** (`\w+|[^\w\s]`); offsets absolutos de caracteres |
-| `contextrag/core/ingestion.py` | Carga de PDF (con mapa de páginas), Markdown, texto y código; `Ingestor` (reindexa reemplazando la versión anterior) |
+| `contextrag/core/ingestion.py` | Carga de PDF (con mapa de páginas), Markdown, texto y código; `Ingestor` (idempotente: no reindexa documentos sin cambios; reemplazo atómico en cambios) |
 | `contextrag/retrieval/vector_store.py` | `QdrantVectorStore` (filtro de tenant/ACL **dentro** de la consulta, cifrado opcional del texto por tenant) e `InMemoryVectorStore` |
-| `contextrag/retrieval/bm25.py` | BM25 local con `rank_bm25` por tenant; se reconstruye desde Qdrant tras un reinicio |
+| `contextrag/retrieval/bm25.py` | BM25 local por tenant: `BM25Index` (`rank_bm25`, por defecto) e `IncrementalBM25Index` (mismas puntuaciones, actualizable in situ); ambos se reconstruyen desde Qdrant tras un reinicio |
 | `contextrag/retrieval/hybrid_search.py` | RRF, `HybridIndex` (Qdrant+BM25 sincronizados) y `HybridRetriever` (rerank → padres top-K) |
 | `contextrag/retrieval/reranker.py` | `CrossEncoderReranker` (bge-reranker), `CohereReranker`, `LexicalReranker` (offline) |
 | `contextrag/verification/nli_verifier.py` | `verify_attribution(statement, context_chunks) -> float`, `NLIVerifier` (con citas y coordenadas), `DebertaNLI`, `LexicalEntailment` (heurístico), mensaje de contingencia |
 | `contextrag/generation/llm.py` | Claude (`AnthropicLLM`), Ollama, y `ExtractiveLLM` offline |
 | `contextrag/pipeline.py` | Bucle recuperar → generar → verificar → reintentar → fallback; caché de consultas |
-| `contextrag/api/server.py` | FastAPI: `/ingest`, `/query`, `/healthz` (+ `DELETE /documents/{id}`, `/audit`, `/metrics`) |
+| `contextrag/api/server.py` | FastAPI: `/ingest`, `/query`, `/healthz` (+ `GET /documents`, `DELETE /documents/{id}`, `/audit`, `/metrics`) |
+| `contextrag/api/auth.py`, `ratelimit.py` | Claves ligadas a tenant/grupos/rol (solo digests SHA-256) y límite de tasa por tenant |
 | `contextrag/eval/` | Arnés de evaluación + conjuntos adversarial y end-to-end (`python -m contextrag eval`) |
-| `contextrag/__main__.py` | CLI: `serve`, `ingest`, `ask`, `eval` |
+| `contextrag/__main__.py` | CLI: `serve`, `ingest`, `ask`, `eval` (`--sweep` calibra el umbral), `keygen` |
 | `.github/workflows/ci.yml` | CI: tests (Py 3.10/3.12, con Redis y PostgreSQL reales) + evaluación de seguridad |
 | `deploy/` | `docker-compose.yml` (Qdrant, PostgreSQL+pgvector, Redis, API), `Dockerfile`, `init.sql` |
 
@@ -82,9 +83,10 @@ Configuración por variables de entorno (también pasables al compose):
 | `QDRANT_URL` | `http://qdrant:6333` | Vector DB (si falta: en memoria) |
 | `POSTGRES_DSN` | `postgresql://user:pw@host/db` | Auditoría persistente (+ pgvector si la extensión existe) |
 | `REDIS_URL` | `redis://redis:6379/0` | Caché de embeddings y de respuestas verificadas |
+| `BM25` | `rank` (defecto, `rank_bm25`) \| `incremental` | `incremental`: mismas puntuaciones que `rank_bm25` (probado) pero sin reconstruir el índice tras cada ingesta |
 | `EMBEDDER` / `EMBED_MODEL` | `hashing` \| `bge` / `BAAI/bge-large-en-v1.5` | Embeddings (`bge` requiere extra `models`) |
 | `RERANKER` | `lexical` \| `cross-encoder` \| `cohere` (+`COHERE_API_KEY`) | Reranking |
-| `NLI` | `lexical` \| `deberta` | Verificación (`deberta` requiere extra `models`) |
+| `NLI` / `NLI_MODEL` | `lexical` \| `deberta` / ruta o id HF | Verificación (`deberta` requiere extra `models`) |
 | `LLM` / `LLM_MODEL` | `extractive` \| `anthropic` (+`ANTHROPIC_API_KEY`) \| `ollama` (`OLLAMA_HOST`) | Generación |
 | `MASTER_KEY` | ≥16 bytes | Cifra el texto de los chunks en reposo con clave derivada por tenant |
 | `CONTEXTRAG_KEYS_FILE` | ruta a JSON | **Autenticación por clave ligada a tenant/grupos/rol** (recomendado; ver abajo) |
@@ -110,7 +112,7 @@ CONTEXTRAG_KEYS_FILE=keys.json python -m contextrag serve
 curl -s -X POST localhost:8000/query -H 'X-API-Key: crag_…' -H 'Content-Type: application/json' -d '{"question":"…"}'
 ```
 
-Roles: `reader` (consultar) · `admin` (consultar, ingestar, borrar, `/audit` de su tenant) · `ops` (sólo `/metrics`).
+Roles: `reader` (consultar) · `admin` (consultar, ingestar, borrar, listar, `/audit` de su tenant) · `ops` (sólo `/metrics`).
 El fichero guarda únicamente digests SHA-256 (permisos 0600). La auditoría registra el id de la clave, no una
 cabecera falsificable.
 
@@ -168,6 +170,7 @@ Borrar un documento (chunks, vectores y BM25; invalida la caché del tenant; ide
 
 ```bash
 curl -s -X DELETE localhost:8000/documents/politica.md -H 'X-Tenant: acme'
+curl -s localhost:8000/documents -H 'X-Tenant: acme'   # documentos indexados (doc_id, source, parents, chars, acl, doc_hash)
 curl -s localhost:8000/metrics        # Prometheus: contextrag_queries_total{status="verified"}, latencia, cache hits…
 ```
 
@@ -182,36 +185,43 @@ Opciones de `/query`: `"groups": ["legal"]` (grupos del usuario para ACL), `"top
 python -m contextrag ask "¿Cuánto se conservan los registros?" --tenant acme --docs ./docs   # exit 0 verificada · 2 fallback
 python -m contextrag ingest ./docs --tenant acme --acl legal,hr    # con QDRANT_URL etc. para que persista
 python -m contextrag serve --port 8000
+python -m contextrag eval --sweep    # + falsos respaldos/recall por umbral y el umbral más bajo seguro
 python -m contextrag eval            # exit 1 si se aprueba una afirmación falsa o hay una respuesta insegura
 ```
 
 `eval` mide lo que el producto promete evitar: **`false_support_rate`** (afirmaciones falsas que el NLI aprueba:
 sujetos intercambiados, números, negaciones, unidades, antónimos, alcance, modalidad, afirmaciones extra…),
 `recall` (afirmaciones correctas aceptadas), y end-to-end `unsafe_rate`, `abstention_rate`, `hit@k`, MRR.
-Úsalo para comparar configuraciones (p. ej. `NLI=deberta` vs `lexical`) con `--verifier-cases`/`--rag-cases`
+`--sweep` calibra el umbral: con el heurístico, umbrales ≤0.8 ya aprueban afirmaciones parcialmente respaldadas, por
+lo que 0.95 no es arbitrario; con DeBERTa la curva será otra, mídela. Úsalo para comparar configuraciones (p. ej. `NLI=deberta` vs `lexical`) con `--verifier-cases`/`--rag-cases`
 sobre **tus** documentos antes de confiar en un umbral.
 
 ## Tests
 
-`pytest` ejecuta 134 tests: chunking (tamaños en tokens, enlaces padre-hijo, offsets, parsers), búsqueda híbrida
+`pytest` ejecuta 156 tests: chunking (tamaños en tokens, enlaces padre-hijo, offsets, parsers), búsqueda híbrida
 (RRF, BM25, ACL/tenant, reconstrucción tras reinicio, Qdrant incl. cifrado), verificador NLI, pipeline
 (alucinaciones, bucle de autocorrección, caché, inyección de prompts, relevancia), concurrencia (reemplazo atómico de documentos), arnés de evaluación, CLI, autenticación por clave/roles/ACL, límite de tasa, ingesta idempotente, API completa, y pruebas de integración contra procesos **reales**
-de Redis y PostgreSQL (se omiten si los binarios no están instalados).
+de Redis y PostgreSQL, y contra el código real de `transformers`/`sentence-transformers`/`torch` (`DebertaNLI`,
+`CrossEncoderReranker`, `SentenceTransformerEmbedder`, cableado por variables de entorno) usando modelos diminutos con
+pesos aleatorios construidos al vuelo: verifican la integración (tokenización por pares, índice de la etiqueta
+*entailment*, lotes, truncado, normalización), **no la calidad**. Se omiten si faltan los binarios/extras.
 
 ## Rendimiento (medido, no estimado)
 
 Máquina de desarrollo, stack en memoria, 1500 documentos de ~300 palabras (3000 fragmentos hijo): ingesta
 ≈1000 docs/s; consulta con índice caliente ≈ 29 ms (mediana); consulta inmediatamente después de una ingesta
 ≈ 210 ms, porque `rank_bm25` es inmutable y el índice BM25 del tenant se reconstruye (la tokenización ya se
-cachea por fragmento). La reconstrucción crece linealmente con el tamaño del tenant: para cargas con ingestas
-frecuentes y decenas de miles de fragmentos por tenant habría que sustituir `BM25Index` por un índice
-incremental o por sparse vectors de Qdrant. No se ha medido con Qdrant ni con modelos reales.
+cachea por fragmento). Esa reconstrucción crece linealmente con el tamaño del tenant, por eso existe
+`BM25=incremental` (`IncrementalBM25Index`): un índice invertido que se actualiza in situ, con puntuaciones
+idénticas a `rank_bm25.BM25Plus` (verificado en tests, incluidas actualizaciones y borrados) y sin coste de
+reconstrucción. No se ha medido con Qdrant ni con modelos reales.
 
 ## Límites conocidos
 
 * **No verificado aquí:** `docker compose` (no hay daemon Docker en el entorno de desarrollo), un servidor Qdrant
-  real (se probó el modo embebido de `qdrant-client`), y los modelos reales: `SentenceTransformerEmbedder` (bge),
-  `CrossEncoderReranker`, `CohereReranker`, `DebertaNLI`, `AnthropicLLM`, `OllamaLLM`. PostgreSQL se probó sin la
+  real (se probó el modo embebido de `qdrant-client`), los **pesos** reales (Hugging Face está bloqueado en el entorno:
+  la calidad de bge/bge-reranker/DeBERTa no se ha medido; sólo su integración, con modelos diminutos), y
+  `CohereReranker`, `AnthropicLLM`, `OllamaLLM` (requieren red/claves). PostgreSQL se probó sin la
   extensión `pgvector` (la columna cae a `float8[]`); con la imagen `pgvector/pgvector` se usa `vector(dim)`.
 * Los componentes offline (hashing, léxico, extractivo) son sustitutos deterministas. `LexicalEntailment` falla
   cerrado (rechaza paráfrasis y reordenaciones; es sensible al orden de las palabras) pero no detecta todas las

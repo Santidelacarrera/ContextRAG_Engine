@@ -38,6 +38,7 @@ def main(argv: list[str] | None = None) -> int:
     e = sub.add_parser("eval", help="run the built-in (or custom) evaluation; exit 1 if anything is unsafe")
     e.add_argument("--verifier-cases", help="JSON file of {premise, claim, label, category, id}")
     e.add_argument("--rag-cases", help="JSON file of {documents, cases}")
+    e.add_argument("--sweep", action="store_true", help="also print false-support/recall for a range of thresholds")
     e.add_argument("--json", action="store_true", help="print machine-readable results")
 
     args = ap.parse_args(argv)
@@ -83,14 +84,19 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(a.to_response(), ensure_ascii=False, indent=2))
         return 0 if a.status.value == "verified" else 2
 
-    from .eval.harness import eval_rag, eval_verifier, load_json
+    from .eval.harness import eval_rag, eval_verifier, load_json, sweep_thresholds
 
     rag = factory.from_env()
     vr = eval_verifier(rag.verifier.nli, rag.cfg.verification_threshold,
                        load_json("", args.verifier_cases) if args.verifier_cases else None)
     rr = eval_rag(factory.from_env, load_json("", args.rag_cases) if args.rag_cases else None)
+    vcases = load_json("", args.verifier_cases) if args.verifier_cases else None
+    sweep = sweep_thresholds(rag.verifier.nli, vcases) if args.sweep else None
     if args.json:
-        print(json.dumps({"verifier": vr.to_dict(), "rag": rr.to_dict()}, ensure_ascii=False, indent=2))
+        out = {"verifier": vr.to_dict(), "rag": rr.to_dict()}
+        if sweep:
+            out["sweep"] = sweep
+        print(json.dumps(out, ensure_ascii=False, indent=2))
     else:
         print(f"verifier  cases={vr.total}  false_support_rate={vr.false_support_rate:.1%}  recall={vr.recall:.1%}")
         for c, acc in sorted(vr.by_category.items()):
@@ -102,6 +108,11 @@ def main(argv: list[str] | None = None) -> int:
                            ("missed answers", rr.failures)):
             if ids:
                 print(f"  {label}: {', '.join(ids)}")
+        if sweep:
+            print("threshold  false_support  recall")
+            for r in sweep["rows"]:
+                print(f"  {r['threshold']:<8} {r['false_support_rate']:>12.1%} {r['recall']:>8.1%}")
+            print(f"  recommended threshold (lowest with zero false supports): {sweep['recommended']}")
     return 1 if (vr.false_supports or rr.unsafe) else 0
 
 

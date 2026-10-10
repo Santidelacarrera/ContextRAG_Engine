@@ -19,3 +19,15 @@ jobs:
       - run: pytest -q
       - name: Safety evaluation (fails on any unsupported claim approved or unsafe answer)
         run: python -m contextrag eval
+
+  models:
+    # real transformers / sentence-transformers / torch code paths, exercised with tiny local random-weight models
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -e ".[dev,api,models]"
+      - run: pytest -q tests/test_models_local.py

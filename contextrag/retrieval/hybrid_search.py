@@ -49,6 +49,9 @@ class HybridIndex:
     def doc_hash(self, tenant: str, doc_id: str) -> str | None:
         return self.store.doc_hash(tenant, doc_id)
 
+    def list_documents(self, tenant: str) -> list[dict]:
+        return self.store.list_documents(tenant)
+
     def health(self) -> bool:
         return self.store.health()
 

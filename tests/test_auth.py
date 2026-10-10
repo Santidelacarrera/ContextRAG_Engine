@@ -149,3 +149,12 @@ def test_api_returns_429_with_retry_after_and_limits_per_tenant():
     assert int(r.headers["Retry-After"]) >= 1
     assert c.post("/query", json={"question": "x"}, headers={"X-Tenant": "other"}).status_code == 200
     assert c.get("/healthz").status_code == 200  # never limited
+
+
+def test_only_admins_can_list_documents(secured):
+    c, h, _ = secured
+    assert c.get("/documents", headers=h("bob")).status_code == 403
+    assert c.get("/documents", headers=h("ops")).status_code == 403
+    docs = c.get("/documents", headers=h("ana")).json()["documents"]
+    assert [d["doc_id"] for d in docs] == ["policy.md", "s.txt"]
+    assert c.get("/documents", headers=h("eve")).json()["documents"] == []

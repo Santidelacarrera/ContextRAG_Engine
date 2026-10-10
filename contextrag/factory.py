@@ -31,8 +31,9 @@ def from_env() -> ContextRAG:
     """Backends are chosen by env vars:
 
     EMBEDDER=hashing|bge (EMBED_MODEL)   RERANKER=lexical|cross-encoder|cohere (COHERE_API_KEY, RERANK_MIN_SCORE: relevance floor)
-    NLI=lexical|deberta                  LLM=extractive|anthropic|ollama (LLM_MODEL, OLLAMA_HOST)
+    NLI=lexical|deberta (NLI_MODEL)                  LLM=extractive|anthropic|ollama (LLM_MODEL, OLLAMA_HOST)
     QDRANT_URL (else embedded in-memory)  POSTGRES_DSN (else in-memory audit)  REDIS_URL (else in-memory cache)
+    BM25=rank|incremental (rank = rank_bm25, rebuilt after changes; incremental = same scores, fast under frequent ingests)
     MASTER_KEY (enables per-tenant encryption of chunk text at rest)  CONTEXTRAG_* (see Settings)
     """
     env = os.getenv
@@ -81,7 +82,7 @@ def from_env() -> ContextRAG:
     if env("NLI", "lexical") == "deberta":
         from .verification.nli_verifier import DebertaNLI
 
-        nli = DebertaNLI()
+        nli = DebertaNLI(env("NLI_MODEL") or "MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli")
     else:
         nli = LexicalEntailment()
 
@@ -104,5 +105,11 @@ def from_env() -> ContextRAG:
     else:
         audit = InMemoryAudit()
 
-    return ContextRAG(index=HybridIndex(store), embedder=embedder, reranker=reranker, llm=llm, nli=nli,
+    if env("BM25", "rank") == "incremental":
+        from .retrieval.bm25 import IncrementalBM25Index
+
+        bm25 = IncrementalBM25Index(loader=lambda tenant: store.iter_children(tenant))
+    else:
+        bm25 = None
+    return ContextRAG(index=HybridIndex(store, bm25), embedder=embedder, reranker=reranker, llm=llm, nli=nli,
                       audit=audit, cache=cache, settings=cfg)

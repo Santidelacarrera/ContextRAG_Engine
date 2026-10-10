@@ -308,3 +308,115 @@ def test_vectorised_dense_search_matches_brute_force_with_acl_and_k():
     assert len(store.dense(q, "t", frozenset(), 500)) == len([c for c in chunks if not c.acl])  # k > n is fine
     store.delete_document("t", "d")
     assert store.dense(q, "t", frozenset(), 5) == []
+
+
+# ---- incremental BM25 ----------------------------------------------------------------------
+
+def _corpus(seed=5, n=120):
+    import random
+
+    rnd = random.Random(seed)
+    vocab = [f"termino{i}" for i in range(60)]
+    return [ChildChunk(f"c{i}", f"p{i}", f"d{i % 17}", "t", " ".join(rnd.choices(vocab, k=rnd.randint(3, 40))), 0, 1,
+                       ("g1",) if i % 9 == 0 else ()) for i in range(n)], vocab, rnd
+
+
+def _same_ranking(a, b):
+    """Equal scores position by position; ids must agree wherever the score is not (numerically) tied."""
+    assert len(a) == len(b)
+    for i, ((ca, sa), (cb, sb)) in enumerate(zip(a, b)):
+        assert abs(sa - sb) < 1e-9
+        tied = (i > 0 and abs(a[i - 1][1] - sa) < 1e-9) or (i + 1 < len(a) and abs(a[i + 1][1] - sa) < 1e-9)
+        assert tied or ca.id == cb.id
+
+
+def test_incremental_bm25_scores_equal_rank_bm25_exactly():
+    from contextrag.retrieval.bm25 import BM25Index, IncrementalBM25Index
+
+    chunks, vocab, rnd = _corpus()
+    ref, inc = BM25Index(), IncrementalBM25Index()
+    ref.add(chunks)
+    inc.add(chunks)
+    for groups in (frozenset(), frozenset({"g1"})):
+        for _ in range(25):
+            q = " ".join(rnd.choices(vocab, k=rnd.randint(1, 5)))  # includes repeated terms
+            _same_ranking(ref.search(q, "t", groups, 15), inc.search(q, "t", groups, 15))
+
+
+def test_incremental_bm25_stays_equal_through_updates_and_deletes():
+    from contextrag.retrieval.bm25 import BM25Index, IncrementalBM25Index
+
+    chunks, vocab, rnd = _corpus(seed=9, n=80)
+    ref, inc = BM25Index(), IncrementalBM25Index()
+    for idx in (ref, inc):
+        idx.add(chunks)
+    for step in range(12):
+        doc = f"d{rnd.randrange(17)}"
+        for idx in (ref, inc):
+            idx.delete_document("t", doc)
+        fresh = [ChildChunk(f"n{step}-{j}", f"np{step}", doc, "t", " ".join(rnd.choices(vocab, k=12)), 0, 1) for j in range(3)]
+        for idx in (ref, inc):
+            idx.add(fresh)
+        # re-adding an existing id replaces it (no double counting)
+        for idx in (ref, inc):
+            idx.add([ChildChunk(fresh[0].id, fresh[0].parent_id, doc, "t", "termino1 termino2", 0, 1)])
+        q = " ".join(rnd.choices(vocab, k=3))
+        _same_ranking(ref.search(q, "t", frozenset(), 10), inc.search(q, "t", frozenset(), 10))
+
+
+def test_incremental_bm25_isolation_edge_cases_and_store_reload():
+    from contextrag.retrieval.bm25 import IncrementalBM25Index
+
+    store = InMemoryVectorStore()
+    chunks = [ChildChunk("a", "pa", "d1", "acme", "manzanas rojas", 0, 1), ChildChunk("b", "pb", "d2", "rival", "manzanas verdes", 0, 1)]
+    store.add([], chunks, [[0.0], [0.0]])
+    inc = IncrementalBM25Index(loader=lambda t: store.iter_children(t))  # lazily loaded from the durable store
+    assert [c.id for c, _ in inc.search("manzanas", "acme", frozenset(), 5)] == ["a"]
+    assert inc.search("manzanas", "nadie", frozenset(), 5) == []
+    assert inc.search("el de la", "acme", frozenset(), 5) == [] and inc.search("zzz", "acme", frozenset(), 5) == []
+    inc.delete_document("acme", "d1")
+    assert inc.search("manzanas", "acme", frozenset(), 5) == []
+
+
+def test_incremental_backend_works_end_to_end_and_is_faster_after_changes():
+    import time
+
+    from contextrag.retrieval.bm25 import BM25Index, IncrementalBM25Index
+
+    chunks, vocab, _ = _corpus(n=3000)
+    timings = {}
+    for name, idx in (("rank", BM25Index()), ("inc", IncrementalBM25Index())):
+        idx.add(chunks)
+        idx.search("termino1", "t", frozenset(), 5)  # warm
+        t = time.perf_counter()
+        for i in range(5):
+            idx.add([ChildChunk(f"x{i}", "p", "dx", "t", "termino3 nuevo", 0, 1)])
+            idx.search("termino3", "t", frozenset(), 5)
+        timings[name] = time.perf_counter() - t
+    assert timings["inc"] < timings["rank"] / 3  # no rebuild per change
+
+    index = HybridIndex(InMemoryVectorStore(), IncrementalBM25Index())
+    emb = HashingEmbedder()
+    p, c = chunk_document(DOCS["audit.md"], doc_id="audit.md", tenant="acme", source="audit.md")
+    index.replace_document("acme", "audit.md", p, c, emb.embed([x.text for x in c]))
+    r = HybridRetriever(index, emb, LexicalReranker(), Settings())
+    assert r.retrieve("registros de auditoría", "acme")[0].parent.doc_id == "audit.md"
+
+
+def test_factory_selects_bm25_backend(monkeypatch):
+    from contextrag import factory
+    from contextrag.retrieval.bm25 import IncrementalBM25Index
+
+    monkeypatch.setenv("BM25", "incremental")
+    rag = factory.from_env()
+    assert isinstance(rag.index.bm25, IncrementalBM25Index)
+    rag.ingestor.ingest_text("Los registros se conservan 7 años.", tenant="t", doc_id="d")
+    assert rag.ask("¿cuánto se conservan los registros?", tenant="t").status.value == "verified"
+
+
+def test_qdrant_list_documents_matches_in_memory():
+    pytest.importorskip("qdrant_client")
+    mem, _ = build()
+    qd, _ = build(QdrantVectorStore(HashingEmbedder().dim))
+    assert qd.list_documents("acme") == mem.list_documents("acme") and len(mem.list_documents("acme")) == 3
+    assert qd.list_documents("other") == []

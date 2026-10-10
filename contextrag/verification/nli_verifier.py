@@ -19,6 +19,7 @@ from ..core.text import content_tokens, split_sentences, stem, tokenize
 
 DEFAULT_THRESHOLD = 0.95
 MAX_WINDOW = 3  # evidence windows span 1..3 consecutive sentences
+EVIDENCE_TOLERANCE = 0.02  # windows this close to the best score compete for being reported as evidence
 
 
 def fallback_message(threshold: float = DEFAULT_THRESHOLD) -> str:
@@ -187,8 +188,16 @@ class NLIVerifier:
                 verdicts.append(ClaimVerdict(claim, cites, 0.0, False, None, "cited passage empty"))
                 continue
             scores = self.nli.entailment([(w, claim) for w, _, _, _ in cand])
-            # highest entailment; among ties the tightest window, so evidence coordinates are minimal
-            best = max(range(len(scores)), key=lambda i: (round(scores[i], 6), -len(cand[i][0])))
+            # Support is decided by the best entailment score. For the *evidence span* we prefer, among windows that
+            # also pass the threshold and score within EVIDENCE_TOLERANCE of the best, the one that most resembles the
+            # claim, then the tightest -- so saturated NLI scores never pick an arbitrary (e.g. heading) sentence.
+            top = max(scores)
+            floor = max(self.threshold, top - EVIDENCE_TOLERANCE) if top >= self.threshold else top
+            eligible = [i for i in range(len(scores)) if scores[i] >= floor]
+            claim_terms = {stem(t) for t in content_tokens(claim)}
+            overlap = lambda i: (len(claim_terms & {stem(t) for t in content_tokens(cand[i][0])}) / len(claim_terms)
+                                 if claim_terms else 0.0)
+            best = max(eligible, key=lambda i: (round(overlap(i), 6), -len(cand[i][0]), scores[i]))
             w, s, e, ctx = cand[best]
             ok = scores[best] >= self.threshold
             p = ctx.parent

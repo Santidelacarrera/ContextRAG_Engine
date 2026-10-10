@@ -31,6 +31,10 @@ class VectorStore(Protocol):
         """Fingerprint of the currently indexed version of a document, if any."""
         ...
 
+    def list_documents(self, tenant: str) -> list[dict]:
+        """One summary per indexed document: doc_id, source, parents, chars, acl, doc_hash."""
+        ...
+
     def health(self) -> bool: ...
 
 
@@ -97,12 +101,26 @@ class InMemoryVectorStore:
             for pid in [p.id for p in self._parents.values() if p.tenant == tenant and p.doc_id == doc_id]:
                 del self._parents[pid]
 
+    def list_documents(self, tenant):
+        with self._lock:
+            return _summarise(p for p in self._parents.values() if p.tenant == tenant)
+
     def doc_hash(self, tenant, doc_id):
         with self._lock:
             return next((p.doc_hash for p in self._parents.values() if p.tenant == tenant and p.doc_id == doc_id), None)
 
     def health(self):
         return True
+
+
+def _summarise(parents) -> list[dict]:
+    docs: dict[str, dict] = {}
+    for p in parents:
+        d = docs.setdefault(p.doc_id, {"doc_id": p.doc_id, "source": p.source, "parents": 0, "chars": 0,
+                                        "acl": list(p.acl), "doc_hash": p.doc_hash})
+        d["parents"] += 1
+        d["chars"] = max(d["chars"], p.end)
+    return sorted(docs.values(), key=lambda d: d["doc_id"])
 
 
 def _uid(s: str) -> str:
@@ -199,6 +217,18 @@ class QdrantVectorStore:
                               qm.FieldCondition(key="doc_id", match=qm.MatchValue(value=doc_id))])
         for col in (self.col, self.pcol):
             self.client.delete(col, qm.FilterSelector(filter=flt))
+
+    def list_documents(self, tenant):
+        qm, offset, parents = self.qm, None, []
+        flt = self._tenant_filter(tenant)
+        while True:
+            pts, offset = self.client.scroll(self.pcol, scroll_filter=flt, limit=256, offset=offset, with_payload=True)
+            for pt in pts:
+                d = pt.payload
+                parents.append(ParentChunk(d["pid"], d["doc_id"], tenant, d["source"], "", d["start"], d["end"],
+                                           tuple(d["acl"]), doc_hash=d.get("doc_hash", "")))
+            if offset is None:
+                return _summarise(parents)
 
     def doc_hash(self, tenant, doc_id):
         qm = self.qm
