@@ -283,3 +283,28 @@ def test_replacing_a_document_never_exposes_a_gap():
     t1, t2 = threading.Thread(target=churn), threading.Thread(target=watch)
     t2.start(); t1.start(); t1.join(); t2.join()
     assert gaps == []
+
+
+def test_vectorised_dense_search_matches_brute_force_with_acl_and_k():
+    import random
+
+    random.seed(3)
+    store = InMemoryVectorStore()
+    unit = lambda v: [x / math.sqrt(sum(y * y for y in v)) for x in v]
+    chunks, vecs = [], []
+    for i in range(200):
+        acl = ("g1",) if i % 5 == 0 else (("g2",) if i % 7 == 0 else ())
+        chunks.append(ChildChunk(f"c{i}", f"p{i}", "d", "t", f"t{i}", 0, 1, acl))
+        vecs.append(unit([random.gauss(0, 1) for _ in range(16)]))
+    store.add([], chunks, vecs)
+    q = unit([random.gauss(0, 1) for _ in range(16)])
+    for groups in (frozenset(), frozenset({"g1"}), frozenset({"g1", "g2"})):
+        want = sorted(((c.id, sum(a * b for a, b in zip(q, v))) for c, v in zip(chunks, vecs)
+                       if not c.acl or set(c.acl) & groups), key=lambda x: -x[1])[:10]
+        got = [(c.id, s) for c, s in store.dense(q, "t", groups, 10)]
+        assert [i for i, _ in got] == [i for i, _ in want]
+        assert all(abs(a[1] - b[1]) < 1e-5 for a, b in zip(got, want))
+    assert store.dense(q, "other-tenant", frozenset(), 5) == []
+    assert len(store.dense(q, "t", frozenset(), 500)) == len([c for c in chunks if not c.acl])  # k > n is fine
+    store.delete_document("t", "d")
+    assert store.dense(q, "t", frozenset(), 5) == []

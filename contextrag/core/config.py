@@ -10,6 +10,7 @@ class Settings:
     parent_tokens: int = 1024
     child_tokens: int = 256
     child_overlap_tokens: int = 32
+    embed_batch_size: int = 64
     # retrieval
     dense_k: int = 30
     sparse_k: int = 30

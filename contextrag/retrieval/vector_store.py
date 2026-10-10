@@ -9,6 +9,8 @@ import threading
 import uuid
 from typing import Iterator, Protocol, Sequence
 
+import numpy as np
+
 from ..core.models import ChildChunk, ParentChunk
 from ..core.security import TenantCipher, visible
 
@@ -25,16 +27,22 @@ class VectorStore(Protocol):
 
     def delete_document(self, tenant: str, doc_id: str) -> None: ...
 
+    def doc_hash(self, tenant: str, doc_id: str) -> str | None:
+        """Fingerprint of the currently indexed version of a document, if any."""
+        ...
+
     def health(self) -> bool: ...
 
 
 class InMemoryVectorStore:
-    """Reference implementation: exact cosine search (vectors are expected L2-normalised). Thread-safe."""
+    """Reference implementation: exact cosine search with one numpy matrix per tenant (vectors are expected
+    L2-normalised). Thread-safe. For large corpora use Qdrant (approximate search, on disk, horizontally scalable)."""
 
     def __init__(self):
         self._parents: dict[str, ParentChunk] = {}
         self._children: dict[str, ChildChunk] = {}
         self._vecs: dict[str, Sequence[float]] = {}
+        self._mats: dict[str, tuple[list[ChildChunk], np.ndarray, np.ndarray, list[int]]] = {}
         self._lock = threading.RLock()
 
     def add(self, parents, children, vectors):
@@ -43,13 +51,34 @@ class InMemoryVectorStore:
                 self._parents[p.id] = p
             for c, v in zip(children, vectors, strict=True):
                 self._children[c.id], self._vecs[c.id] = c, v
+                self._mats.pop(c.tenant, None)
+
+    def _matrix(self, tenant):
+        """(chunks, matrix, public-mask, indices of ACL-restricted rows); rebuilt lazily after a change."""
+        m = self._mats.get(tenant)
+        if m is None:
+            chunks = [c for c in self._children.values() if c.tenant == tenant]
+            if not chunks:
+                return chunks, np.empty((0, 0), dtype=np.float32), np.empty(0, dtype=bool), []
+            mat = np.asarray([self._vecs[c.id] for c in chunks], dtype=np.float32)
+            public = np.asarray([not c.acl for c in chunks], dtype=bool)
+            m = self._mats[tenant] = (chunks, mat, public, [i for i, c in enumerate(chunks) if c.acl])
+        return m
 
     def dense(self, vec, tenant, groups, k):
         with self._lock:
-            cands = [(c, self._vecs[c.id]) for c in self._children.values()
-                     if c.tenant == tenant and visible(c.acl, groups)]
-        scored = [(c, sum(a * b for a, b in zip(vec, v))) for c, v in cands]
-        return sorted(scored, key=lambda x: -x[1])[:k]
+            chunks, mat, public, restricted = self._matrix(tenant)
+        if not chunks:
+            return []
+        scores = mat @ np.asarray(vec, dtype=np.float32)
+        mask = public.copy()
+        for i in restricted:
+            if visible(chunks[i].acl, groups):
+                mask[i] = True
+        idx = np.flatnonzero(mask)
+        if idx.size > k:
+            idx = idx[np.argpartition(-scores[idx], k - 1)[:k]]
+        return [(chunks[i], float(scores[i])) for i in sorted(idx, key=lambda i: -scores[i])]
 
     def parent(self, parent_id, tenant):
         with self._lock:
@@ -62,10 +91,15 @@ class InMemoryVectorStore:
 
     def delete_document(self, tenant, doc_id):
         with self._lock:
+            self._mats.pop(tenant, None)
             for cid in [c.id for c in self._children.values() if c.tenant == tenant and c.doc_id == doc_id]:
                 del self._children[cid], self._vecs[cid]
             for pid in [p.id for p in self._parents.values() if p.tenant == tenant and p.doc_id == doc_id]:
                 del self._parents[pid]
+
+    def doc_hash(self, tenant, doc_id):
+        with self._lock:
+            return next((p.doc_hash for p in self._parents.values() if p.tenant == tenant and p.doc_id == doc_id), None)
 
     def health(self):
         return True
@@ -114,13 +148,8 @@ class QdrantVectorStore:
 
     def add(self, parents, children, vectors):
         qm = self.qm
-        if parents:
-            self.client.upsert(self.pcol, [qm.PointStruct(
-                id=_uid(p.id), vector=[0.0],
-                payload={"pid": p.id, "tenant": p.tenant, "doc_id": p.doc_id, "source": p.source,
-                         "text": self._enc(p.tenant, p.text), "start": p.start, "end": p.end,
-                         "acl": list(p.acl), "section": p.section, "page": p.page,
-                         "page_breaks": list(p.page_breaks)}) for p in parents])
+        # children first, parents last: a parent carrying ``doc_hash`` is the commit marker, so an ingest that
+        # died half-way is never mistaken for a completed one by the unchanged-document check.
         if children:
             self.client.upsert(self.col, [qm.PointStruct(
                 id=_uid(c.id), vector=list(v),
@@ -128,6 +157,13 @@ class QdrantVectorStore:
                          "text": self._enc(c.tenant, c.text), "start": c.start, "end": c.end,
                          "acl": list(c.acl), "public": not c.acl})
                 for c, v in zip(children, vectors, strict=True)])
+        if parents:
+            self.client.upsert(self.pcol, [qm.PointStruct(
+                id=_uid(p.id), vector=[0.0],
+                payload={"pid": p.id, "tenant": p.tenant, "doc_id": p.doc_id, "source": p.source,
+                         "text": self._enc(p.tenant, p.text), "start": p.start, "end": p.end,
+                         "acl": list(p.acl), "section": p.section, "page": p.page,
+                         "page_breaks": list(p.page_breaks), "doc_hash": p.doc_hash}) for p in parents])
 
     def _child(self, tenant, d):
         return ChildChunk(d["cid"], d["pid"], d["doc_id"], tenant, self._dec(tenant, d["text"]),
@@ -145,7 +181,7 @@ class QdrantVectorStore:
         d = pts[0].payload
         return ParentChunk(d["pid"], d["doc_id"], tenant, d["source"], self._dec(tenant, d["text"]),
                            d["start"], d["end"], tuple(d["acl"]), d.get("section", ""), d.get("page"),
-                           tuple(d.get("page_breaks", ())))
+                           tuple(d.get("page_breaks", ())), d.get("doc_hash", ""))
 
     def iter_children(self, tenant=None):
         flt = self._tenant_filter(tenant) if tenant else None
@@ -163,6 +199,14 @@ class QdrantVectorStore:
                               qm.FieldCondition(key="doc_id", match=qm.MatchValue(value=doc_id))])
         for col in (self.col, self.pcol):
             self.client.delete(col, qm.FilterSelector(filter=flt))
+
+    def doc_hash(self, tenant, doc_id):
+        qm = self.qm
+        pts, _ = self.client.scroll(
+            self.pcol, limit=1, with_payload=["doc_hash"],
+            scroll_filter=qm.Filter(must=[qm.FieldCondition(key="tenant", match=qm.MatchValue(value=tenant)),
+                                          qm.FieldCondition(key="doc_id", match=qm.MatchValue(value=doc_id))]))
+        return pts[0].payload.get("doc_hash") if pts else None
 
     def health(self):
         try:

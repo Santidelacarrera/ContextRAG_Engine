@@ -18,6 +18,7 @@ class ParentChunk:
     section: str = ""  # markdown heading path / code signature the chunk starts under
     page: int | None = None  # 1-based PDF page of ``start``
     page_breaks: tuple[int, ...] = ()  # absolute offsets inside the chunk where a further page begins
+    doc_hash: str = ""  # fingerprint of the whole source document + chunking config (skip unchanged re-ingests)
 
     def page_at(self, offset: int) -> int | None:
         if self.page is None:

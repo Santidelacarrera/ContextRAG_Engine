@@ -28,6 +28,13 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--docs", type=Path, help="file or directory to ingest before asking")
     q.add_argument("--groups", default="")
 
+    k = sub.add_parser("keygen", help="create an API key bound to a tenant/role; prints the key once + the keys-file entry")
+    k.add_argument("--id", required=True, help="label that shows up in the audit log")
+    k.add_argument("--tenant", default="", help="required unless --role ops")
+    k.add_argument("--role", choices=["reader", "admin", "ops"], default="reader")
+    k.add_argument("--groups", default="", help="comma-separated ACL groups")
+    k.add_argument("--add-to", type=Path, help="keys file to create/update (CONTEXTRAG_KEYS_FILE)")
+
     e = sub.add_parser("eval", help="run the built-in (or custom) evaluation; exit 1 if anything is unsafe")
     e.add_argument("--verifier-cases", help="JSON file of {premise, claim, label, category, id}")
     e.add_argument("--rag-cases", help="JSON file of {documents, cases}")
@@ -41,6 +48,23 @@ def main(argv: list[str] | None = None) -> int:
         import uvicorn
 
         uvicorn.run("contextrag.api.server:app_factory", factory=True, host=args.host, port=args.port)
+        return 0
+
+    if args.cmd == "keygen":
+        import os
+
+        from .api.auth import KeyStore, new_entry
+
+        key, digest, entry = new_entry(args.id, args.tenant, args.role, csv(args.groups))
+        KeyStore({digest: entry})  # validates the entry (e.g. tenant required for non-ops roles)
+        if args.add_to:
+            entries = json.loads(args.add_to.read_text()) if args.add_to.exists() else {}
+            entries[digest] = entry
+            args.add_to.write_text(json.dumps(entries, indent=2))
+            os.chmod(args.add_to, 0o600)
+        else:
+            print(json.dumps({digest: entry}, indent=2), file=sys.stderr)
+        print(key)  # shown once; only its SHA-256 is stored
         return 0
 
     from . import factory

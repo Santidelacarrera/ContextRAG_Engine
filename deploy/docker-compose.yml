@@ -52,7 +52,9 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       COHERE_API_KEY: ${COHERE_API_KEY:-}
       MASTER_KEY: ${MASTER_KEY:-}
-      CONTEXTRAG_API_KEY: ${CONTEXTRAG_API_KEY:-}
+      CONTEXTRAG_API_KEY: ${CONTEXTRAG_API_KEY:-}            # shared secret (trusts X-Tenant)
+      CONTEXTRAG_KEYS_FILE: ${CONTEXTRAG_KEYS_FILE:-}        # per-tenant keys (recommended); mount the file, e.g. -v ./keys.json:/run/keys.json:ro
+      CONTEXTRAG_RATE_LIMIT_PER_MIN: ${CONTEXTRAG_RATE_LIMIT_PER_MIN:-}
     ports: ["8000:8000"]
     depends_on:
       qdrant: {condition: service_healthy}

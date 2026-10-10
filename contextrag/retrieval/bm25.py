@@ -34,6 +34,7 @@ class BM25Index:
         self._loader = loader
         self._chunks: dict[str, dict[str, ChildChunk]] = {}
         self._built: dict[str, _TenantIndex] = {}
+        self._terms: dict[str, list[str]] = {}  # tokenisation is the costly part of a rebuild: do it once per chunk
         self._lock = threading.RLock()
 
     def _tenant_chunks(self, tenant: str) -> dict[str, ChildChunk]:
@@ -45,6 +46,7 @@ class BM25Index:
         with self._lock:
             for c in children:
                 self._tenant_chunks(c.tenant)[c.id] = c
+                self._terms.pop(c.id, None)
                 self._built.pop(c.tenant, None)
 
     def delete_document(self, tenant: str, doc_id: str) -> None:
@@ -52,6 +54,7 @@ class BM25Index:
             chunks = self._tenant_chunks(tenant)
             for cid in [i for i, c in chunks.items() if c.doc_id == doc_id]:
                 del chunks[cid]
+                self._terms.pop(cid, None)
             self._built.pop(tenant, None)
 
     def _index(self, tenant: str) -> _TenantIndex:
@@ -59,7 +62,7 @@ class BM25Index:
             idx = self._built.get(tenant)
             if idx is None:
                 chunks = list(self._tenant_chunks(tenant).values())
-                docs = [terms(c.text) for c in chunks]
+                docs = [self._terms.get(c.id) or self._terms.setdefault(c.id, terms(c.text)) for c in chunks]
                 nonempty = any(docs)
                 idx = _TenantIndex(chunks, [frozenset(d) for d in docs], BM25Plus(docs) if nonempty else None)
                 self._built[tenant] = idx

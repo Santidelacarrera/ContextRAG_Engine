@@ -143,6 +143,16 @@ def _id(*parts: object) -> str:
     return hashlib.sha1("|".join(map(str, parts)).encode()).hexdigest()[:16]
 
 
+def fingerprint(text: str, kind: str, source: str, acl: tuple[str, ...], cfg: Settings) -> str:
+    """Identity of an indexed document: changes if the content, metadata, ACL or chunking config change."""
+    h = hashlib.sha256()
+    for part in (text, kind, source, ",".join(sorted(acl)),
+                 f"{cfg.parent_tokens}/{cfg.child_tokens}/{cfg.child_overlap_tokens}"):
+        h.update(part.encode())
+        h.update(b"\0")
+    return h.hexdigest()
+
+
 def chunk_document(
     text: str,
     *,
@@ -158,6 +168,7 @@ def chunk_document(
     cfg = settings or Settings()
     if cfg.child_tokens > cfg.parent_tokens or cfg.child_overlap_tokens >= cfg.child_tokens:
         raise ValueError("require child_overlap_tokens < child_tokens <= parent_tokens")
+    fp = fingerprint(text, kind, source, acl, cfg)
     toks = token_spans(text)
     if not toks:
         return [], []
@@ -195,7 +206,7 @@ def chunk_document(
         pid = _id(tenant, doc_id, ps, pe)
         page = bisect.bisect_right(page_starts, ps) if page_starts else None
         breaks = tuple(x for x in page_starts[page:] if x < pe) if page_starts else ()
-        parents.append(ParentChunk(pid, doc_id, tenant, source, text[ps:pe], ps, pe, acl, section, page, breaks))
+        parents.append(ParentChunk(pid, doc_id, tenant, source, text[ps:pe], ps, pe, acl, section, page, breaks, fp))
         k = i
         while k < j:
             m = min(k + cfg.child_tokens, j)

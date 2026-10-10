@@ -50,15 +50,21 @@ class Ingestor:
         self.index, self.embedder, self.cfg, self.cache = index, embedder, settings or Settings(), cache
 
     def ingest(self, doc: LoadedDocument, *, tenant: str, doc_id: str, source: str | None = None,
-               acl: tuple[str, ...] = ()) -> dict:
-        """Index (replacing any previous version of) a document."""
+               acl: tuple[str, ...] = (), force: bool = False) -> dict:
+        """Index (replacing any previous version of) a document; a no-op if it is unchanged (unless ``force``)."""
         parents, children = chunk_document(
             doc.text, doc_id=doc_id, tenant=tenant, source=source or doc_id, kind=doc.kind, acl=acl,
             page_starts=doc.page_starts or None, settings=self.cfg)
-        vectors = self.embedder.embed([c.text for c in children]) if children else []
+        info = {"doc_id": doc_id, "kind": doc.kind, "parents": len(parents), "children": len(children)}
+        if parents and not force and self.index.doc_hash(tenant, doc_id) == parents[0].doc_hash:
+            return {**info, "unchanged": True}  # identical content/ACL/config already indexed: no embeddings, no churn
+        texts = [c.text for c in children]
+        vectors: list = []
+        for i in range(0, len(texts), self.cfg.embed_batch_size):
+            vectors.extend(self.embedder.embed(texts[i : i + self.cfg.embed_batch_size]))
         self.index.replace_document(tenant, doc_id, parents, children, vectors)
         self._invalidate(tenant)
-        return {"doc_id": doc_id, "kind": doc.kind, "parents": len(parents), "children": len(children)}
+        return {**info, "unchanged": False}
 
     def delete(self, *, tenant: str, doc_id: str) -> None:
         self.index.delete_document(tenant, doc_id)
@@ -69,11 +75,11 @@ class Ingestor:
             self.cache.incr(f"epoch:{tenant}")
 
     def ingest_text(self, text: str, *, tenant: str, doc_id: str, source: str | None = None, kind: str | None = None,
-                    acl: tuple[str, ...] = ()) -> dict:
+                    acl: tuple[str, ...] = (), force: bool = False) -> dict:
         return self.ingest(LoadedDocument(text, kind or detect_kind(source or doc_id)), tenant=tenant,
-                           doc_id=doc_id, source=source, acl=acl)
+                           doc_id=doc_id, source=source, acl=acl, force=force)
 
-    def ingest_path(self, root: Path, *, tenant: str, acl: tuple[str, ...] = ()) -> list[dict]:
+    def ingest_path(self, root: Path, *, tenant: str, acl: tuple[str, ...] = (), force: bool = False) -> list[dict]:
         root = Path(root)
         base = root.parent if root.is_file() else root
         files = [root] if root.is_file() else sorted(p for p in root.rglob("*") if p.is_file())
@@ -83,5 +89,5 @@ class Ingestor:
             if f.suffix.lower() not in INGESTIBLE or any(part.startswith(".") for part in rel.parts):
                 continue
             out.append(self.ingest(load_bytes(f.read_bytes(), f.name), tenant=tenant, doc_id=rel.as_posix(),
-                                   source=rel.as_posix(), acl=acl))
+                                   source=rel.as_posix(), acl=acl, force=force))
         return out

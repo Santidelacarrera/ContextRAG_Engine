@@ -1,21 +1,34 @@
 """FastAPI service.
 
-Tenant is taken from the ``X-Tenant`` header. If ``CONTEXTRAG_API_KEY`` is set, every call except
-``/healthz`` must also send a matching ``X-API-Key``; real authentication/tenant binding should still
-be enforced by a gateway in front of this service.
+Authentication modes (first match wins):
+
+1. **Key store** (``CONTEXTRAG_KEYS_FILE``): each ``X-API-Key`` is bound to a tenant, ACL groups and a role
+   (see ``contextrag.api.auth``). The tenant/groups are taken from the key; a conflicting ``X-Tenant`` is
+   refused (403) and request ``groups`` may only *narrow* the key's groups. Use this in production.
+2. **Shared secret** (``CONTEXTRAG_API_KEY``): one key for everybody; ``X-Tenant`` and ``groups`` are trusted
+   as sent, so a gateway must set them.
+3. **Open** (development): tenant from ``X-Tenant``, everything trusted.
+
+``/healthz`` is always open. ``CONTEXTRAG_RATE_LIMIT_PER_MIN`` limits calls per tenant (HTTP 429).
 """
 from __future__ import annotations
 
 import binascii
 import hmac
+import logging
 import os
+from dataclasses import dataclass
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from ..core.ingestion import LoadedDocument, load_base64
 from ..pipeline import ContextRAG
+from .auth import KeyStore
+from .ratelimit import RateLimiter
 
+log = logging.getLogger("contextrag")
 
 MAX_TEXT_CHARS = 5_000_000
 MAX_B64_CHARS = 30_000_000  # ~22 MB of raw bytes
@@ -31,6 +44,7 @@ class DocumentIn(BaseModel):
                                description="Display name; its extension selects the parser (.md/.py/.pdf...)")
     kind: str | None = Field(None, pattern="^(text|markdown|code)$")
     acl: list[str] = Field([], max_length=64)
+    force: bool = Field(False, description="Re-embed even if the document is unchanged")
 
 
 class IngestIn(BaseModel):
@@ -43,9 +57,23 @@ class QueryIn(BaseModel):
     top_k: int | None = Field(None, ge=1, le=20)
 
 
-def create_app(rag: ContextRAG | None = None) -> FastAPI:
-    app = FastAPI(title="ContextRAG Engine", version="0.2.0")
+@dataclass(frozen=True)
+class Caller:
+    id: str | None
+    tenant: str
+    groups: frozenset[str] | None  # None => unbound: the request body's groups are trusted
+
+
+def create_app(rag: ContextRAG | None = None, keystore: KeyStore | None = None,
+               rate_limit_per_min: int | None = None) -> FastAPI:
+    app = FastAPI(title="ContextRAG Engine", version="0.3.0")
     state = {"rag": rag}
+    keystore = keystore if keystore is not None else KeyStore.from_env()
+    if rate_limit_per_min is None and os.getenv("CONTEXTRAG_RATE_LIMIT_PER_MIN"):
+        rate_limit_per_min = int(os.environ["CONTEXTRAG_RATE_LIMIT_PER_MIN"])
+    limiter = RateLimiter(rate_limit_per_min) if rate_limit_per_min else None
+    if keystore is None and not os.getenv("CONTEXTRAG_API_KEY"):
+        log.warning("API is running without authentication (set CONTEXTRAG_KEYS_FILE or CONTEXTRAG_API_KEY)")
 
     def get_rag() -> ContextRAG:
         if state["rag"] is None:
@@ -54,20 +82,39 @@ def create_app(rag: ContextRAG | None = None) -> FastAPI:
             state["rag"] = factory.from_env()
         return state["rag"]
 
-    def auth(x_api_key: str | None = Header(None)):
-        expected = os.getenv("CONTEXTRAG_API_KEY")
-        if expected and not hmac.compare_digest(x_api_key or "", expected):
-            raise HTTPException(401, "invalid or missing X-API-Key")
+    def caller_for(action: str):
+        def dep(x_api_key: str | None = Header(None), x_tenant: str | None = Header(None),
+                x_user: str | None = Header(None)) -> Caller:
+            claimed = x_tenant.strip() if x_tenant and x_tenant.strip() else None
+            if keystore is not None:
+                p = keystore.authenticate(x_api_key)
+                if p is None:
+                    raise HTTPException(401, "invalid or missing X-API-Key")
+                if not p.can(action):
+                    raise HTTPException(403, f"role '{p.role}' may not {action}")
+                if claimed and p.tenant and claimed != p.tenant:
+                    raise HTTPException(403, "X-Tenant does not match the API key's tenant")
+                caller = Caller(p.id, p.tenant, p.groups)
+            else:
+                expected = os.getenv("CONTEXTRAG_API_KEY")
+                if expected and not hmac.compare_digest(x_api_key or "", expected):
+                    raise HTTPException(401, "invalid or missing X-API-Key")
+                if action == "metrics":
+                    caller = Caller(x_user, claimed or "", None)
+                else:
+                    if not claimed:
+                        raise HTTPException(400, "X-Tenant header required")
+                    caller = Caller(x_user, claimed, None)
+            if limiter:
+                wait = limiter.acquire(caller.tenant or caller.id or "-")
+                if wait > 0:
+                    raise HTTPException(429, "rate limit exceeded", headers={"Retry-After": str(int(wait) + 1)})
+            return caller
 
-    def tenant(x_tenant: str | None = Header(None)) -> str:
-        if not x_tenant or not x_tenant.strip():
-            raise HTTPException(400, "X-Tenant header required")
-        return x_tenant.strip()
+        return dep
 
     @app.get("/healthz")
     def healthz():
-        from fastapi.responses import JSONResponse
-
         try:
             parts = get_rag().health()
         except Exception as e:  # backend unreachable at startup
@@ -75,8 +122,8 @@ def create_app(rag: ContextRAG | None = None) -> FastAPI:
         ok = all(parts.values())
         return JSONResponse({"status": "ok" if ok else "degraded", "components": parts}, status_code=200 if ok else 503)
 
-    @app.post("/ingest", dependencies=[Depends(auth)])
-    def ingest(body: IngestIn, t: str = Depends(tenant)):
+    @app.post("/ingest")
+    def ingest(body: IngestIn, c: Caller = Depends(caller_for("ingest"))):
         rag = get_rag()
         results = []
         for d in body.documents:
@@ -92,32 +139,38 @@ def create_app(rag: ContextRAG | None = None) -> FastAPI:
                 raise HTTPException(422, f"{d.doc_id}: invalid content ({e})")
             except Exception as e:  # unreadable PDF etc.
                 raise HTTPException(422, f"{d.doc_id}: could not parse document ({type(e).__name__})")
-            results.append(rag.ingestor.ingest(doc, tenant=t, doc_id=d.doc_id, source=name, acl=tuple(d.acl)))
-        return {"tenant": t, "documents": results}
+            results.append(rag.ingestor.ingest(doc, tenant=c.tenant, doc_id=d.doc_id, source=name,
+                                               acl=tuple(d.acl), force=d.force))
+        return {"tenant": c.tenant, "documents": results}
 
-    @app.post("/query", dependencies=[Depends(auth)])
-    def query(body: QueryIn, t: str = Depends(tenant), x_user: str | None = Header(None)):
-        a = get_rag().ask(body.question, tenant=t, groups=frozenset(body.groups), user=x_user, top_k=body.top_k)
+    @app.post("/query")
+    def query(body: QueryIn, c: Caller = Depends(caller_for("query")), x_user: str | None = Header(None)):
+        if c.groups is None:  # unbound modes: trust the request
+            groups = frozenset(body.groups)
+        else:  # bound to a key: a request may only narrow the key's groups, never widen them
+            extra = set(body.groups) - c.groups
+            if extra:
+                raise HTTPException(403, f"groups not granted to this key: {sorted(extra)}")
+            groups = frozenset(body.groups) if body.groups else c.groups
+        a = get_rag().ask(body.question, tenant=c.tenant, groups=groups, user=c.id or x_user, top_k=body.top_k)
         return a.to_response()
 
-    @app.delete("/documents/{doc_id:path}", dependencies=[Depends(auth)])
-    def delete_document(doc_id: str, t: str = Depends(tenant)):
+    @app.delete("/documents/{doc_id:path}")
+    def delete_document(doc_id: str, c: Caller = Depends(caller_for("delete"))):
         """Remove a document (all its chunks, vectors and BM25 entries) for the tenant. Idempotent."""
-        get_rag().ingestor.delete(tenant=t, doc_id=doc_id)
-        return {"tenant": t, "deleted": doc_id}
+        get_rag().ingestor.delete(tenant=c.tenant, doc_id=doc_id)
+        return {"tenant": c.tenant, "deleted": doc_id}
 
-    @app.get("/metrics", dependencies=[Depends(auth)])
-    def metrics():
-        from fastapi.responses import PlainTextResponse
-
+    @app.get("/metrics")
+    def metrics(_: Caller = Depends(caller_for("metrics"))):
         return PlainTextResponse(get_rag().metrics_text(), media_type="text/plain; version=0.0.4")
 
-    @app.get("/audit", dependencies=[Depends(auth)])
-    def audit(limit: int = 50, t: str = Depends(tenant)):
-        log = get_rag().audit
-        if log is None:
+    @app.get("/audit")
+    def audit(limit: int = 50, c: Caller = Depends(caller_for("audit"))):
+        log_ = get_rag().audit
+        if log_ is None:
             raise HTTPException(404, "audit log not configured")
-        return log.list(t, max(1, min(limit, 500)))
+        return log_.list(c.tenant, max(1, min(limit, 500)))
 
     return app
 

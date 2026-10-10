@@ -191,3 +191,91 @@ def test_relevance_gate_is_off_for_rerankers_without_a_floor():
     r.reranker = r.retriever.reranker = NoFloor()
     r.ingestor.ingest_text("Los registros se conservan 7 años.", tenant="t", doc_id="d")
     assert r.ask("¿cuánto se conservan los registros?", tenant="t").status is Status.VERIFIED
+
+
+# ---- idempotent ingestion / batching --------------------------------------------------------
+
+class CountingEmbedder:
+    dim = 64
+
+    def __init__(self):
+        from contextrag.core.embeddings import HashingEmbedder
+
+        self._h, self.batches = HashingEmbedder(self.dim), []
+
+    def embed(self, texts):
+        self.batches.append(len(texts))
+        return self._h.embed(texts)
+
+
+def counting_rag():
+    r = factory.offline()
+    r.embedder = r.ingestor.embedder = r.retriever.embedder = CountingEmbedder()
+    return r
+
+
+def test_reingesting_unchanged_document_is_a_noop():
+    r = counting_rag()
+    first = r.ingestor.ingest_text("Los registros se conservan 7 años.", tenant="t", doc_id="d.md")
+    assert first["unchanged"] is False and r.embedder.batches == [first["children"]]
+    r.ask("¿cuánto se conservan los registros?", tenant="t")
+    n_calls = len(r.embedder.batches)
+    again = r.ingestor.ingest_text("Los registros se conservan 7 años.", tenant="t", doc_id="d.md")
+    assert again["unchanged"] is True and len(r.embedder.batches) == n_calls  # no embedding calls
+    assert r.ask("¿cuánto se conservan los registros?", tenant="t").cached  # and the query cache stays warm
+
+
+def test_changed_content_acl_or_force_reindexes():
+    r = counting_rag()
+    ing = r.ingestor.ingest_text
+    ing("Los registros se conservan 7 años.", tenant="t", doc_id="d.md")
+    assert ing("Los registros se conservan 9 años.", tenant="t", doc_id="d.md")["unchanged"] is False
+    assert ing("Los registros se conservan 9 años.", tenant="t", doc_id="d.md", acl=("hr",))["unchanged"] is False
+    assert ing("Los registros se conservan 9 años.", tenant="t", doc_id="d.md", acl=("hr",))["unchanged"] is True
+    assert ing("Los registros se conservan 9 años.", tenant="t", doc_id="d.md", acl=("hr",), force=True)["unchanged"] is False
+    assert ing("Los registros se conservan 9 años.", tenant="u", doc_id="d.md")["unchanged"] is False  # per tenant
+
+
+def test_chunking_config_change_triggers_reindex():
+    from contextrag.core.config import Settings
+
+    r = counting_rag()
+    r.ingestor.ingest_text("uno dos tres. " * 50, tenant="t", doc_id="d")
+    r.ingestor.cfg = Settings(parent_tokens=100, child_tokens=40, child_overlap_tokens=5)
+    assert r.ingestor.ingest_text("uno dos tres. " * 50, tenant="t", doc_id="d")["unchanged"] is False
+
+
+def test_incomplete_ingest_is_not_mistaken_for_complete():
+    from contextrag.core.chunking import chunk_document
+
+    r = counting_rag()
+    text = "Los registros se conservan 7 años."
+    parents, children = chunk_document(text, doc_id="d", tenant="t", source="d")
+    r.index.store.add([], children, r.embedder.embed([c.text for c in children]))  # crashed before parents landed
+    assert r.ingestor.ingest_text(text, tenant="t", doc_id="d", source="d")["unchanged"] is False
+    assert r.ask("¿cuánto se conservan los registros?", tenant="t").status is Status.VERIFIED
+
+
+def test_embeddings_are_computed_in_bounded_batches():
+    from contextrag.core.config import Settings
+
+    r = counting_rag()
+    r.ingestor.cfg = Settings(parent_tokens=100, child_tokens=10, child_overlap_tokens=2, embed_batch_size=7)
+    info = r.ingestor.ingest_text("palabra " * 400, tenant="t", doc_id="big")
+    assert info["children"] > 20 and max(r.embedder.batches) <= 7 and sum(r.embedder.batches) == info["children"]
+
+
+def test_unchanged_ingest_with_qdrant_store():
+    pytest.importorskip("qdrant_client")
+    from contextrag.retrieval.hybrid_search import HybridIndex
+    from contextrag.retrieval.vector_store import QdrantVectorStore
+
+    r = counting_rag()
+    r.index = r.ingestor.index = r.retriever.index = HybridIndex(QdrantVectorStore(CountingEmbedder.dim))
+    assert r.ingestor.ingest_text("Los registros se conservan 7 años.", tenant="t", doc_id="d")["unchanged"] is False
+    assert r.ingestor.ingest_text("Los registros se conservan 7 años.", tenant="t", doc_id="d")["unchanged"] is True
+    assert r.ingestor.ingest_text("Los registros se conservan 8 años.", tenant="t", doc_id="d")["unchanged"] is False
+    assert r.index.doc_hash("t", "nope") is None
+
+
+import pytest  # noqa: E402  (used by the qdrant test above)

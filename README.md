@@ -87,15 +87,39 @@ Configuración por variables de entorno (también pasables al compose):
 | `NLI` | `lexical` \| `deberta` | Verificación (`deberta` requiere extra `models`) |
 | `LLM` / `LLM_MODEL` | `extractive` \| `anthropic` (+`ANTHROPIC_API_KEY`) \| `ollama` (`OLLAMA_HOST`) | Generación |
 | `MASTER_KEY` | ≥16 bytes | Cifra el texto de los chunks en reposo con clave derivada por tenant |
-| `CONTEXTRAG_API_KEY` | secreto | Exige cabecera `X-API-Key` (salvo `/healthz`) |
+| `CONTEXTRAG_KEYS_FILE` | ruta a JSON | **Autenticación por clave ligada a tenant/grupos/rol** (recomendado; ver abajo) |
+| `CONTEXTRAG_API_KEY` | secreto | Alternativa simple: una clave compartida; confía en `X-Tenant`/`groups` que envíe el llamante |
+| `CONTEXTRAG_RATE_LIMIT_PER_MIN` | entero | Límite por tenant (HTTP 429 + `Retry-After`), por proceso |
 | `CONTEXTRAG_VERIFICATION_THRESHOLD`, `CONTEXTRAG_TOP_K`, … | ver `core/config.py` | Umbral (0.95), K, tamaños de chunk |
 
 Para producción real: `pip install -e ".[api,qdrant,redis,postgres,security,pdf,models,anthropic]"` con
 `EMBEDDER=bge RERANKER=cross-encoder NLI=deberta LLM=anthropic`.
 
+## Seguridad y autenticación
+
+Sin claves ligadas, **quien llama declara su tenant y sus grupos** (`X-Tenant`, `groups`), es decir, sólo es seguro
+detrás de un gateway que los fije. Con `CONTEXTRAG_KEYS_FILE` cada `X-API-Key` queda ligada a un tenant, unos
+grupos ACL y un rol; el servidor ignora lo que el cliente afirme y rechaza (403) un `X-Tenant` distinto o `groups`
+que la clave no tenga (el cuerpo sólo puede *restringir* los grupos, nunca ampliarlos).
+
+```bash
+python -m contextrag keygen --id ana --tenant acme --role admin --add-to keys.json   # imprime la clave UNA vez
+python -m contextrag keygen --id lia --tenant acme --groups legal --add-to keys.json  # reader con grupo 'legal'
+python -m contextrag keygen --id prometheus --role ops --add-to keys.json            # sólo /metrics
+CONTEXTRAG_KEYS_FILE=keys.json python -m contextrag serve
+curl -s -X POST localhost:8000/query -H 'X-API-Key: crag_…' -H 'Content-Type: application/json' -d '{"question":"…"}'
+```
+
+Roles: `reader` (consultar) · `admin` (consultar, ingestar, borrar, `/audit` de su tenant) · `ops` (sólo `/metrics`).
+El fichero guarda únicamente digests SHA-256 (permisos 0600). La auditoría registra el id de la clave, no una
+cabecera falsificable.
+
 ## API
 
-Todas las rutas (salvo `/healthz`) requieren `X-Tenant`. Los datos de un tenant nunca son visibles a otro.
+Todas las rutas (salvo `/healthz`) requieren `X-Tenant` (o una clave ligada). Los datos de un tenant nunca son
+visibles a otro. `/ingest` es idempotente: un documento sin cambios (contenido, ACL y configuración de chunking
+iguales) no recalcula embeddings (`"unchanged": true`; `"force": true` lo obliga). La ingesta escribe hijos primero
+y padres al final, de modo que una ingesta interrumpida nunca se confunde con una completa.
 
 ```bash
 # estado (200 ok · 503 si algún componente falla)
@@ -169,10 +193,19 @@ sobre **tus** documentos antes de confiar en un umbral.
 
 ## Tests
 
-`pytest` ejecuta 117 tests: chunking (tamaños en tokens, enlaces padre-hijo, offsets, parsers), búsqueda híbrida
+`pytest` ejecuta 134 tests: chunking (tamaños en tokens, enlaces padre-hijo, offsets, parsers), búsqueda híbrida
 (RRF, BM25, ACL/tenant, reconstrucción tras reinicio, Qdrant incl. cifrado), verificador NLI, pipeline
-(alucinaciones, bucle de autocorrección, caché, inyección de prompts, relevancia), concurrencia (reemplazo atómico de documentos), arnés de evaluación, CLI, API completa, y pruebas de integración contra procesos **reales**
+(alucinaciones, bucle de autocorrección, caché, inyección de prompts, relevancia), concurrencia (reemplazo atómico de documentos), arnés de evaluación, CLI, autenticación por clave/roles/ACL, límite de tasa, ingesta idempotente, API completa, y pruebas de integración contra procesos **reales**
 de Redis y PostgreSQL (se omiten si los binarios no están instalados).
+
+## Rendimiento (medido, no estimado)
+
+Máquina de desarrollo, stack en memoria, 1500 documentos de ~300 palabras (3000 fragmentos hijo): ingesta
+≈1000 docs/s; consulta con índice caliente ≈ 29 ms (mediana); consulta inmediatamente después de una ingesta
+≈ 210 ms, porque `rank_bm25` es inmutable y el índice BM25 del tenant se reconstruye (la tokenización ya se
+cachea por fragmento). La reconstrucción crece linealmente con el tamaño del tenant: para cargas con ingestas
+frecuentes y decenas de miles de fragmentos por tenant habría que sustituir `BM25Index` por un índice
+incremental o por sparse vectors de Qdrant. No se ha medido con Qdrant ni con modelos reales.
 
 ## Límites conocidos
 

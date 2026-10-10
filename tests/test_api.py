@@ -179,3 +179,9 @@ def test_metrics_endpoint(client):
     client.post("/query", json={"question": "¿Cuánto tiempo se conservan los registros de auditoría?"}, headers=H)
     r = client.get("/metrics")
     assert r.status_code == 200 and 'contextrag_queries_total{status="verified"} 1' in r.text
+
+
+def test_ingest_reports_unchanged_and_force_reembeds(client):
+    assert ingest(client, text=POLICY).json()["documents"][0]["unchanged"] is False
+    assert ingest(client, text=POLICY).json()["documents"][0]["unchanged"] is True
+    assert ingest(client, text=POLICY, force=True).json()["documents"][0]["unchanged"] is False

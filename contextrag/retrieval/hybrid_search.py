@@ -46,6 +46,9 @@ class HybridIndex:
             self.delete_document(tenant, doc_id)
             self.add(parents, children, vectors)
 
+    def doc_hash(self, tenant: str, doc_id: str) -> str | None:
+        return self.store.doc_hash(tenant, doc_id)
+
     def health(self) -> bool:
         return self.store.health()
 
@@ -73,12 +76,13 @@ class HybridRetriever:
             best[child.parent_id] = max(s, best.get(child.parent_id, float("-inf")))
         floor = getattr(self.reranker, "min_score", None)
         contexts: list[Context] = []
-        for pid in sorted(best, key=lambda p: -best[p]):
-            if floor is not None and best[pid] <= floor:
-                continue
-            parent = self.index.store.parent(pid, tenant)
-            if parent is not None:
-                contexts.append(Context(len(contexts) + 1, parent, best[pid]))
-            if len(contexts) >= (top_k or self.cfg.top_k):
-                break
+        with self.index.lock:  # a concurrent replace_document must not delete a parent between rank and fetch
+            for pid in sorted(best, key=lambda p: -best[p]):
+                if floor is not None and best[pid] <= floor:
+                    continue
+                parent = self.index.store.parent(pid, tenant)
+                if parent is not None:
+                    contexts.append(Context(len(contexts) + 1, parent, best[pid]))
+                if len(contexts) >= (top_k or self.cfg.top_k):
+                    break
         return contexts
