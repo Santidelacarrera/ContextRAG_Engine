@@ -59,6 +59,13 @@ class BM25Index:
                 self._terms.pop(cid, None)
             self._built.pop(tenant, None)
 
+    def delete_tenant(self, tenant: str) -> None:
+        with self._lock:
+            for cid in list(self._chunks.get(tenant, {})):
+                self._terms.pop(cid, None)
+            self._chunks[tenant] = {}  # an explicit empty set: do not lazily reload from the (already emptied) store
+            self._built.pop(tenant, None)
+
     def _index(self, tenant: str) -> _TenantIndex:
         with self._lock:
             idx = self._built.get(tenant)
@@ -111,6 +118,10 @@ class IncrementalBM25Index:
             inc = self._tenant(tenant)
             for cid in [i for i, c in inc.chunks.items() if c.doc_id == doc_id]:
                 inc.remove(cid)
+
+    def delete_tenant(self, tenant: str) -> None:
+        with self._lock:
+            self._t[tenant] = _Inc()
 
     def search(self, query: str, tenant: str, groups: frozenset[str], k: int) -> list[tuple[ChildChunk, float]]:
         q = terms(query)

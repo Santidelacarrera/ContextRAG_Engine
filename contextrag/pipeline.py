@@ -61,6 +61,22 @@ class ContextRAG:
             items = sorted(self._stats.items())
         return "".join(f"contextrag_{k} {v:g}\n" for k, v in items)
 
+    def erase_tenant(self, tenant: str, *, include_audit: bool = True) -> dict[str, int]:
+        """Right-to-erasure: remove ALL of a tenant's documents, vectors, BM25 entries, cached answers and (unless
+        ``include_audit`` is false, e.g. a legal hold) audit records. API keys are managed separately."""
+        if not tenant:
+            raise ValueError("tenant required")
+        docs = self.ingestor.delete_tenant(tenant)  # also bumps the cache epoch: cached answers become unreachable
+        records = self.audit.delete_tenant(tenant) if (self.audit and include_audit) else 0
+        log.warning("tenant erased tenant=%s documents=%d audit_records=%d", tenant, docs, records)
+        return {"documents": docs, "audit_records": records}
+
+    def purge_audit(self, older_than_days: float) -> int:
+        """Audit retention: delete records older than ``older_than_days`` (all tenants)."""
+        if older_than_days < 0:
+            raise ValueError("older_than_days must be >= 0")
+        return self.audit.purge(older_than_days * 86400) if self.audit else 0
+
     def health(self) -> dict[str, bool]:
         parts = {"index": self.index.health()}
         if self.cache:

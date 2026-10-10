@@ -32,10 +32,10 @@ respuesta auditada (+ coordenadas exactas doc/offset/página)      si no:  "No s
 | `contextrag/verification/nli_verifier.py` | `verify_attribution(statement, context_chunks) -> float`, `NLIVerifier` (con citas y coordenadas), `DebertaNLI`, `LexicalEntailment` (heurístico), mensaje de contingencia |
 | `contextrag/generation/llm.py` | Claude (`AnthropicLLM`), Ollama, y `ExtractiveLLM` offline |
 | `contextrag/pipeline.py` | Bucle recuperar → generar → verificar → reintentar → fallback; caché de consultas |
-| `contextrag/api/server.py` | FastAPI: `/ingest`, `/query`, `/healthz` (+ `GET /documents`, `DELETE /documents/{id}`, `/audit`, `/metrics`) |
+| `contextrag/api/server.py` | FastAPI: `/ingest`, `/query`, `/healthz` (+ `GET /documents`, `DELETE /documents/{id}`, `DELETE /tenant`, `/audit`, `/metrics`) |
 | `contextrag/api/auth.py`, `ratelimit.py` | Claves ligadas a tenant/grupos/rol (solo digests SHA-256) y límite de tasa por tenant |
 | `contextrag/eval/` | Arnés de evaluación + conjuntos adversarial y end-to-end (`python -m contextrag eval`) |
-| `contextrag/__main__.py` | CLI: `serve`, `ingest`, `ask`, `eval` (`--sweep` calibra el umbral), `keygen` |
+| `contextrag/__main__.py` | CLI: `serve`, `ingest`, `ask`, `eval` (`--sweep` calibra el umbral), `keygen`, `erase`, `audit-purge` |
 | `.github/workflows/ci.yml` | CI: tests (Py 3.10/3.12, con Redis y PostgreSQL reales) + evaluación de seguridad |
 | `deploy/` | `docker-compose.yml` (Qdrant, PostgreSQL+pgvector, Redis, API), `Dockerfile`, `init.sql` |
 
@@ -112,7 +112,7 @@ CONTEXTRAG_KEYS_FILE=keys.json python -m contextrag serve
 curl -s -X POST localhost:8000/query -H 'X-API-Key: crag_…' -H 'Content-Type: application/json' -d '{"question":"…"}'
 ```
 
-Roles: `reader` (consultar) · `admin` (consultar, ingestar, borrar, listar, `/audit` de su tenant) · `ops` (sólo `/metrics`).
+Roles: `reader` (consultar) · `admin` (consultar, ingestar, borrar, listar, `/audit`, supresión de su tenant) · `ops` (sólo `/metrics`).
 El fichero guarda únicamente digests SHA-256 (permisos 0600). La auditoría registra el id de la clave, no una
 cabecera falsificable.
 
@@ -174,6 +174,19 @@ curl -s localhost:8000/documents -H 'X-Tenant: acme'   # documentos indexados (d
 curl -s localhost:8000/metrics        # Prometheus: contextrag_queries_total{status="verified"}, latencia, cache hits…
 ```
 
+**Supresión de datos y retención** (cumplimiento): `DELETE /tenant` borra de forma irreversible *todo* lo de un
+tenant —documentos, vectores, índice BM25, respuestas en caché y registros de auditoría— y exige la cabecera
+`X-Confirm-Tenant: <tenant>` con el nombre exacto (y rol `admin`; con claves ligadas sólo puede borrar el tenant de su
+propia clave). `?keep_audit=true` conserva la auditoría (retención legal). Las claves API no se tocan: se gestionan en
+el fichero de claves. Para la retención de la auditoría: `contextrag audit-purge --older-than-days 365`; para
+borrar desde consola: `contextrag erase --tenant acme --yes [--keep-audit]` (con los backends de producción en el
+entorno). Cada supresión queda registrada sólo en el log de la aplicación (no en la auditoría que se borra).
+
+```bash
+curl -s -X DELETE localhost:8000/tenant -H 'X-API-Key: crag_…' -H 'X-Confirm-Tenant: acme'
+# {"tenant":"acme","documents":12,"audit_records":340}
+```
+
 Códigos de error: `422` documento ilegible o **sin texto extraíble** (p. ej. PDF escaneado: la versión previa del
 documento queda intacta), `401/403` autenticación/rol/tenant, `429` límite de tasa, `503` + `Retry-After` si el LLM no
 responde (error de generación: no se muestra el texto de contingencia porque no hubo verificación fallida, sólo una
@@ -205,7 +218,7 @@ sobre **tus** documentos antes de confiar en un umbral.
 
 ## Tests
 
-`pytest` ejecuta 167 tests (158 + 2 omitidos si no están instalados torch/transformers; `ruff check` limpio): chunking (tamaños en tokens, enlaces padre-hijo, offsets, parsers), búsqueda híbrida
+`pytest` ejecuta 179 tests (170 + 2 omitidos si no están instalados torch/transformers; `ruff check` limpio): chunking (tamaños en tokens, enlaces padre-hijo, offsets, parsers), búsqueda híbrida
 (RRF, BM25, ACL/tenant, reconstrucción tras reinicio, Qdrant incl. cifrado), verificador NLI, pipeline
 (alucinaciones, bucle de autocorrección, caché, inyección de prompts, relevancia), concurrencia (reemplazo atómico de documentos), arnés de evaluación, CLI, autenticación por clave/roles/ACL, límite de tasa, ingesta idempotente, API completa, y pruebas de integración contra procesos **reales**
 de Redis y PostgreSQL, y contra el código real de `transformers`/`sentence-transformers`/`torch` (`DebertaNLI`,

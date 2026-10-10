@@ -35,6 +35,14 @@ def main(argv: list[str] | None = None) -> int:
     k.add_argument("--groups", default="", help="comma-separated ACL groups")
     k.add_argument("--add-to", type=Path, help="keys file to create/update (CONTEXTRAG_KEYS_FILE)")
 
+    x = sub.add_parser("erase", help="irreversibly delete ALL data of a tenant (documents, vectors, cache, audit)")
+    x.add_argument("--tenant", required=True)
+    x.add_argument("--keep-audit", action="store_true", help="legal hold: keep the audit records")
+    x.add_argument("--yes", action="store_true", help="required: confirms the erasure")
+
+    pa = sub.add_parser("audit-purge", help="retention: delete audit records older than N days (all tenants)")
+    pa.add_argument("--older-than-days", type=float, required=True)
+
     e = sub.add_parser("eval", help="run the built-in (or custom) evaluation; exit 1 if anything is unsafe")
     e.add_argument("--verifier-cases", help="JSON file of {premise, claim, label, category, id}")
     e.add_argument("--rag-cases", help="JSON file of {documents, cases}")
@@ -74,6 +82,17 @@ def main(argv: list[str] | None = None) -> int:
         rag = factory.from_env()
         print(json.dumps(rag.ingestor.ingest_path(args.path, tenant=args.tenant, acl=csv(args.acl)),
                          ensure_ascii=False, indent=2))
+        return 0
+
+    if args.cmd == "erase":
+        if not args.yes:
+            print("refusing to erase without --yes", file=sys.stderr)
+            return 2
+        print(json.dumps(factory.from_env().erase_tenant(args.tenant, include_audit=not args.keep_audit)))
+        return 0
+
+    if args.cmd == "audit-purge":
+        print(json.dumps({"purged": factory.from_env().purge_audit(args.older_than_days)}))
         return 0
 
     if args.cmd == "ask":

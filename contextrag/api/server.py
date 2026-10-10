@@ -171,6 +171,15 @@ def create_app(rag: ContextRAG | None = None, keystore: KeyStore | None = None,
         get_rag().ingestor.delete(tenant=c.tenant, doc_id=doc_id)
         return {"tenant": c.tenant, "deleted": doc_id}
 
+    @app.delete("/tenant")
+    def erase_tenant(c: Caller = Depends(caller_for("erase")), x_confirm_tenant: str | None = Header(None),
+                     keep_audit: bool = False):
+        """Irreversibly erase everything stored for the caller's tenant. Requires ``X-Confirm-Tenant: <tenant>``
+        so that a stray DELETE cannot wipe a tenant. ``keep_audit=true`` preserves audit records (legal hold)."""
+        if x_confirm_tenant != c.tenant:
+            raise HTTPException(400, "send header X-Confirm-Tenant with the exact tenant name to confirm erasure")
+        return {"tenant": c.tenant, **get_rag().erase_tenant(c.tenant, include_audit=not keep_audit)}
+
     @app.get("/documents")
     def list_documents(c: Caller = Depends(caller_for("list"))):
         """Indexed documents of the tenant (including ACL-restricted ones: this is an admin view)."""

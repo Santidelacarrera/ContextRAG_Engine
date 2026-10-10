@@ -131,6 +131,11 @@ class Ingestor:
         self.index.delete_document(tenant, doc_id)
         self._invalidate(tenant)
 
+    def delete_tenant(self, tenant: str) -> int:
+        n = self.index.delete_tenant(tenant)
+        self._invalidate(tenant)
+        return n
+
     def _invalidate(self, tenant: str) -> None:
         if self.cache:  # cached query results for this tenant are now stale
             self.cache.incr(f"epoch:{tenant}")

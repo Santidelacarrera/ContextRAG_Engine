@@ -35,6 +35,14 @@ class AuditLog(Protocol):
 
     def list(self, tenant: str, limit: int = 50) -> list[dict]: ...
 
+    def delete_tenant(self, tenant: str) -> int:
+        """Erase every audit record of a tenant; returns how many were removed."""
+        ...
+
+    def purge(self, older_than_seconds: float) -> int:
+        """Retention: erase records older than the given age (all tenants); returns how many were removed."""
+        ...
+
     def health(self) -> bool: ...
 
 
@@ -47,6 +55,17 @@ class InMemoryAudit:
 
     def list(self, tenant, limit=50):
         return [r for r in reversed(self.records) if r["tenant"] == tenant][:limit]
+
+    def delete_tenant(self, tenant):
+        keep = [r for r in self.records if r["tenant"] != tenant]
+        n, self.records = len(self.records) - len(keep), keep
+        return n
+
+    def purge(self, older_than_seconds):
+        cutoff = time.time() - older_than_seconds
+        keep = [r for r in self.records if r["ts"] >= cutoff]
+        n, self.records = len(self.records) - len(keep), keep
+        return n
 
     def health(self):
         return True
@@ -106,6 +125,13 @@ class PostgresAudit:
         keys = ("id", "ts", "user", "question", "status", "answer", "confidence", "attempts", "reason",
                 "cached", "claims", "sources")
         return [{**dict(zip(keys, r, strict=True)), "id": str(r[0]), "tenant": tenant} for r in cur.fetchall()]
+
+    def delete_tenant(self, tenant):
+        return self.conn.execute("DELETE FROM answer_audit WHERE tenant = %s", (tenant,)).rowcount
+
+    def purge(self, older_than_seconds):
+        return self.conn.execute("DELETE FROM answer_audit WHERE ts < now() - make_interval(secs => %s)",
+                                 (float(older_than_seconds),)).rowcount
 
     def health(self):
         try:

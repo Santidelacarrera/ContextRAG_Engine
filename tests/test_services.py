@@ -154,3 +154,26 @@ def test_postgres_schema_is_idempotent_and_enforces_status_check(pg_dsn):
         audit.conn.execute(
             "INSERT INTO answer_audit (id, tenant, question, status, answer, confidence, attempts, claims, sources) "
             "VALUES (gen_random_uuid(), 't', 'q', 'bogus', 'a', 0, 0, '[]', '[]')")
+
+
+def test_postgres_erase_tenant_and_retention_purge(pg_dsn):
+    from contextrag.audit import PostgresAudit
+
+    audit = PostgresAudit(pg_dsn, dim=512)
+    audit.conn.execute("DELETE FROM answer_audit")
+    rag = factory.offline()
+    rag.audit = audit
+    for t in ("acme", "rival"):
+        rag.ingestor.ingest_text(POLICY, tenant=t, doc_id="policy.md")
+        rag.ask("¿Cuánto tiempo se conservan los registros de auditoría?", tenant=t)
+        rag.ask("registros", tenant=t)
+    assert len(audit.list("acme")) == 2 and len(audit.list("rival")) == 2
+
+    # retention: age one record by 40 days, then purge anything older than 30
+    audit.conn.execute("UPDATE answer_audit SET ts = now() - interval '40 days' "
+                       "WHERE id = (SELECT id FROM answer_audit WHERE tenant = 'rival' LIMIT 1)")
+    assert rag.purge_audit(30) == 1 and len(audit.list("rival")) == 1
+
+    out = rag.erase_tenant("acme")
+    assert out["audit_records"] == 2 and audit.list("acme") == [] and len(audit.list("rival")) == 1
+    assert rag.erase_tenant("acme")["audit_records"] == 0

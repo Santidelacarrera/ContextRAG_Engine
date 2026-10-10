@@ -31,6 +31,10 @@ class VectorStore(Protocol):
         """Fingerprint of the currently indexed version of a document, if any."""
         ...
 
+    def delete_tenant(self, tenant: str) -> int:
+        """Remove every chunk and vector of a tenant. Returns the number of documents removed."""
+        ...
+
     def list_documents(self, tenant: str) -> list[dict]:
         """One summary per indexed document: doc_id, source, parents, chars, acl, doc_hash."""
         ...
@@ -100,6 +104,16 @@ class InMemoryVectorStore:
                 del self._children[cid], self._vecs[cid]
             for pid in [p.id for p in self._parents.values() if p.tenant == tenant and p.doc_id == doc_id]:
                 del self._parents[pid]
+
+    def delete_tenant(self, tenant):
+        with self._lock:
+            n = len({p.doc_id for p in self._parents.values() if p.tenant == tenant})
+            for cid in [c.id for c in self._children.values() if c.tenant == tenant]:
+                del self._children[cid], self._vecs[cid]
+            for pid in [p.id for p in self._parents.values() if p.tenant == tenant]:
+                del self._parents[pid]
+            self._mats.pop(tenant, None)
+            return n
 
     def list_documents(self, tenant):
         with self._lock:
@@ -217,6 +231,14 @@ class QdrantVectorStore:
                               qm.FieldCondition(key="doc_id", match=qm.MatchValue(value=doc_id))])
         for col in (self.col, self.pcol):
             self.client.delete(col, qm.FilterSelector(filter=flt))
+
+    def delete_tenant(self, tenant):
+        qm = self.qm
+        n = len(self.list_documents(tenant))
+        flt = qm.Filter(must=[qm.FieldCondition(key="tenant", match=qm.MatchValue(value=tenant))])
+        for col in (self.col, self.pcol):
+            self.client.delete(col, qm.FilterSelector(filter=flt))
+        return n
 
     def list_documents(self, tenant):
         offset, parents = None, []

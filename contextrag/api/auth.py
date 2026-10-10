@@ -30,7 +30,7 @@ class Principal:
     role: str
 
     def can(self, action: str) -> bool:
-        allowed = {"reader": {"query"}, "admin": {"query", "ingest", "delete", "audit", "list"}, "ops": {"metrics"}}
+        allowed = {"reader": {"query"}, "admin": {"query", "ingest", "delete", "audit", "list", "erase"}, "ops": {"metrics"}}
         return action in allowed[self.role]
 
 

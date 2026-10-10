@@ -40,6 +40,12 @@ class HybridIndex:
             self.store.delete_document(tenant, doc_id)
             self.bm25.delete_document(tenant, doc_id)
 
+    def delete_tenant(self, tenant: str) -> int:
+        with self.lock:
+            n = self.store.delete_tenant(tenant)
+            self.bm25.delete_tenant(tenant)
+            return n
+
     def replace_document(self, tenant: str, doc_id: str, parents, children, vectors) -> None:
         """Delete the previous version and index the new one without a visible gap."""
         with self.lock:
