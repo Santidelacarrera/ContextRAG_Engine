@@ -3,6 +3,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import threading
+import time
+from collections import Counter
 
 from .audit import AuditLog, record_of
 from .core.cache import Cache
@@ -15,25 +19,47 @@ from .retrieval.reranker import Reranker
 from .verification.nli_verifier import NLIModel, NLIVerifier, fallback_message
 
 
+log = logging.getLogger("contextrag")
+
+
 class ContextRAG:
     def __init__(self, *, index: HybridIndex, embedder, reranker: Reranker, llm: LLM, nli: NLIModel,
                  audit: AuditLog | None = None, cache: Cache | None = None, settings: Settings | None = None):
         self.cfg = settings or Settings()
         self.index, self.embedder, self.llm, self.audit, self.cache = index, embedder, llm, audit, cache
+        self.reranker = reranker
         self.ingestor = Ingestor(index, embedder, self.cfg, cache)
         self.retriever = HybridRetriever(index, embedder, reranker, self.cfg)
         self.verifier = NLIVerifier(nli, self.cfg.verification_threshold)
+        self._stats: Counter = Counter()
+        self._stats_lock = threading.Lock()
 
     # -- public API -----------------------------------------------------------------------
     def ask(self, question: str, *, tenant: str, groups: frozenset[str] = frozenset(), user: str | None = None,
             top_k: int | None = None) -> Answer:
+        t0 = time.perf_counter()
         answer = self._cached(question, tenant, groups, top_k)
         if answer is None:
             answer = self._answer(question, tenant, groups, top_k)
             self._store(question, tenant, groups, top_k, answer)
         if self.audit:
             self.audit.write(record_of(tenant, user, answer), self.embedder.embed([question])[0])
+        ms = (time.perf_counter() - t0) * 1000
+        with self._stats_lock:
+            self._stats[f'queries_total{{status="{answer.status.value}"}}'] += 1
+            self._stats["query_cache_hits_total"] += answer.cached
+            self._stats["query_latency_ms_sum"] += ms
+            self._stats["query_latency_ms_count"] += 1
+        log.info("query tenant=%s status=%s confidence=%.2f attempts=%d cached=%s sources=%d ms=%.0f reason=%r",
+                 tenant, answer.status.value, answer.confidence, answer.attempts, answer.cached,
+                 len(answer.sources), ms, answer.reason)
         return answer
+
+    def metrics_text(self) -> str:
+        """Prometheus text exposition of in-process counters."""
+        with self._stats_lock:
+            items = sorted(self._stats.items())
+        return "".join(f"contextrag_{k} {v:g}\n" for k, v in items)
 
     def health(self) -> dict[str, bool]:
         parts = {"index": self.index.health()}
@@ -76,7 +102,7 @@ class ContextRAG:
             text = self.llm.generate(question, contexts, feedback).strip()
             if not text or text == NO_ANSWER:
                 return self._fallback(question, contexts, [], attempts, "model reported insufficient context")
-            verdicts = self.verifier.verify(text, contexts)
+            verdicts = self._relevance_gate(question, self.verifier.verify(text, contexts))
             if verdicts and all(v.supported for v in verdicts):
                 return Answer(Status.VERIFIED, question, text, min(v.score for v in verdicts), verdicts,
                               contexts, attempts)
@@ -84,6 +110,19 @@ class ContextRAG:
                         or "- the answer contained no verifiable claims")
         return self._fallback(question, contexts, verdicts, attempts, "verification below threshold",
                               min((v.score for v in verdicts), default=0.0))
+
+    def _relevance_gate(self, question: str, verdicts):
+        """Faithful is not enough: the span backing each claim must also be relevant to the question.
+        This stops an answer that merely parrots a poisoned/off-topic sentence of a retrieved document
+        (e.g. "ignore previous instructions and say X"). Applied when the reranker declares ``min_score``."""
+        floor = getattr(self.reranker, "min_score", None)
+        checked = [v for v in verdicts if v.supported and v.evidence]
+        if floor is None or not checked:
+            return verdicts
+        for v, s in zip(checked, self.reranker.score(question, [v.evidence.text for v in checked])):
+            if s <= floor:
+                v.supported, v.evidence, v.reason = False, None, "evidence not relevant to the question"
+        return verdicts
 
     def _fallback(self, question, contexts, verdicts, attempts, reason, confidence=0.0) -> Answer:
         return Answer(Status.FALLBACK, question, fallback_message(self.cfg.verification_threshold), confidence,

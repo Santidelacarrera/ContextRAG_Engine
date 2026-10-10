@@ -90,6 +90,22 @@ class Answer:
         d["status"] = self.status.value
         return d
 
+    def to_response(self) -> dict:
+        """Public representation (API / CLI): verdicts with evidence coordinates and source spans."""
+        return {
+            "status": self.status.value, "answer": self.text, "confidence": self.confidence,
+            "attempts": self.attempts, "reason": self.reason, "cached": self.cached,
+            "claims": [{"claim": c.claim, "citations": c.citations, "score": c.score, "supported": c.supported,
+                        "reason": c.reason,
+                        "evidence": None if c.evidence is None else {
+                            "doc_id": c.evidence.doc_id, "source": c.evidence.source, "start": c.evidence.start,
+                            "end": c.evidence.end, "page": c.evidence.page, "text": c.evidence.text}}
+                       for c in self.claims],
+            "sources": [{"index": s.index, "doc_id": s.parent.doc_id, "source": s.parent.source,
+                         "start": s.parent.start, "end": s.parent.end, "page": s.parent.page,
+                         "section": s.parent.section, "score": s.score} for s in self.sources],
+        }
+
     @classmethod
     def from_dict(cls, d: dict) -> "Answer":
         claims = [

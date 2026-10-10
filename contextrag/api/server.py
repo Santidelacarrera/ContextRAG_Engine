@@ -17,22 +17,29 @@ from ..core.ingestion import LoadedDocument, load_base64
 from ..pipeline import ContextRAG
 
 
+MAX_TEXT_CHARS = 5_000_000
+MAX_B64_CHARS = 30_000_000  # ~22 MB of raw bytes
+MAX_DOCS_PER_REQUEST = 50
+
+
 class DocumentIn(BaseModel):
-    doc_id: str = Field(min_length=1)
-    text: str | None = Field(None, description="Plain text / markdown / source code")
-    content_base64: str | None = Field(None, description="Raw file bytes (e.g. a PDF), base64-encoded")
-    source: str | None = Field(None, description="Display name; its extension selects the parser (.md/.py/.pdf...)")
+    doc_id: str = Field(min_length=1, max_length=512)
+    text: str | None = Field(None, max_length=MAX_TEXT_CHARS, description="Plain text / markdown / source code")
+    content_base64: str | None = Field(None, max_length=MAX_B64_CHARS,
+                                       description="Raw file bytes (e.g. a PDF), base64-encoded")
+    source: str | None = Field(None, max_length=512,
+                               description="Display name; its extension selects the parser (.md/.py/.pdf...)")
     kind: str | None = Field(None, pattern="^(text|markdown|code)$")
-    acl: list[str] = []
+    acl: list[str] = Field([], max_length=64)
 
 
 class IngestIn(BaseModel):
-    documents: list[DocumentIn] = Field(min_length=1)
+    documents: list[DocumentIn] = Field(min_length=1, max_length=MAX_DOCS_PER_REQUEST)
 
 
 class QueryIn(BaseModel):
-    question: str = Field(min_length=1)
-    groups: list[str] = []
+    question: str = Field(min_length=1, max_length=4000)
+    groups: list[str] = Field([], max_length=64)
     top_k: int | None = Field(None, ge=1, le=20)
 
 
@@ -91,23 +98,19 @@ def create_app(rag: ContextRAG | None = None) -> FastAPI:
     @app.post("/query", dependencies=[Depends(auth)])
     def query(body: QueryIn, t: str = Depends(tenant), x_user: str | None = Header(None)):
         a = get_rag().ask(body.question, tenant=t, groups=frozenset(body.groups), user=x_user, top_k=body.top_k)
-        return {
-            "status": a.status.value,
-            "answer": a.text,
-            "confidence": a.confidence,
-            "attempts": a.attempts,
-            "reason": a.reason,
-            "cached": a.cached,
-            "claims": [{"claim": c.claim, "citations": c.citations, "score": c.score, "supported": c.supported,
-                        "reason": c.reason,
-                        "evidence": None if c.evidence is None else {
-                            "doc_id": c.evidence.doc_id, "source": c.evidence.source, "start": c.evidence.start,
-                            "end": c.evidence.end, "page": c.evidence.page, "text": c.evidence.text}}
-                       for c in a.claims],
-            "sources": [{"index": s.index, "doc_id": s.parent.doc_id, "source": s.parent.source,
-                         "start": s.parent.start, "end": s.parent.end, "page": s.parent.page,
-                         "section": s.parent.section, "score": s.score} for s in a.sources],
-        }
+        return a.to_response()
+
+    @app.delete("/documents/{doc_id:path}", dependencies=[Depends(auth)])
+    def delete_document(doc_id: str, t: str = Depends(tenant)):
+        """Remove a document (all its chunks, vectors and BM25 entries) for the tenant. Idempotent."""
+        get_rag().ingestor.delete(tenant=t, doc_id=doc_id)
+        return {"tenant": t, "deleted": doc_id}
+
+    @app.get("/metrics", dependencies=[Depends(auth)])
+    def metrics():
+        from fastapi.responses import PlainTextResponse
+
+        return PlainTextResponse(get_rag().metrics_text(), media_type="text/plain; version=0.0.4")
 
     @app.get("/audit", dependencies=[Depends(auth)])
     def audit(limit: int = 50, t: str = Depends(tenant)):

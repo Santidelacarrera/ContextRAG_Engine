@@ -145,3 +145,37 @@ def test_api_key_enforced_when_configured(client, monkeypatch):
     assert client.post("/ingest", json=body, headers={**H, "X-API-Key": "wrong"}).status_code == 401
     assert client.post("/ingest", json=body, headers={**H, "X-API-Key": "s3cret"}).status_code == 200
     assert client.get("/healthz").status_code == 200  # probes stay open
+
+
+def test_delete_document_removes_it_from_answers_and_cache(client):
+    ingest(client, text=POLICY)
+    body = {"question": "¿Cuánto tiempo se conservan los registros de auditoría?"}
+    assert client.post("/query", json=body, headers=H).json()["status"] == "verified"
+    r = client.delete("/documents/policy.md", headers=H)
+    assert r.status_code == 200 and r.json() == {"tenant": "acme", "deleted": "policy.md"}
+    j = client.post("/query", json=body, headers=H).json()
+    assert j["status"] == "fallback" and not j["cached"]  # stale cached answer must not survive deletion
+    assert client.delete("/documents/policy.md", headers=H).status_code == 200  # idempotent
+    assert client.delete("/documents/x", headers={}).status_code == 400
+
+
+def test_delete_is_tenant_scoped_and_supports_nested_ids(client):
+    ingest(client, doc_id="docs/a.md", text="El plazo es de 30 días.")
+    client.delete("/documents/docs/a.md", headers={"X-Tenant": "rival"})
+    assert client.post("/query", json={"question": "¿cuál es el plazo?"}, headers=H).json()["status"] == "verified"
+    client.delete("/documents/docs/a.md", headers=H)
+    assert client.post("/query", json={"question": "¿cuál es el plazo?"}, headers=H).json()["status"] == "fallback"
+
+
+def test_size_limits_reject_oversized_requests(client):
+    big = {"documents": [{"doc_id": f"d{i}", "text": "x"} for i in range(51)]}
+    assert client.post("/ingest", json=big, headers=H).status_code == 422
+    assert client.post("/query", json={"question": "x" * 4001}, headers=H).status_code == 422
+    assert client.post("/ingest", json={"documents": [{"doc_id": "d" * 513, "text": "x"}]}, headers=H).status_code == 422
+
+
+def test_metrics_endpoint(client):
+    ingest(client, text=POLICY)
+    client.post("/query", json={"question": "¿Cuánto tiempo se conservan los registros de auditoría?"}, headers=H)
+    r = client.get("/metrics")
+    assert r.status_code == 200 and 'contextrag_queries_total{status="verified"} 1' in r.text

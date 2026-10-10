@@ -16,6 +16,10 @@ from .retrieval.vector_store import InMemoryVectorStore
 from .verification.nli_verifier import LexicalEntailment
 
 
+def _opt_float(v: str | None) -> float | None:
+    return float(v) if v not in (None, "") else None
+
+
 def offline(settings: Settings | None = None, llm=None) -> ContextRAG:
     """Self-contained stack: hashing embeddings, in-memory stores, lexical rerank/NLI, extractive LLM."""
     return ContextRAG(index=HybridIndex(InMemoryVectorStore()), embedder=HashingEmbedder(),
@@ -26,7 +30,7 @@ def offline(settings: Settings | None = None, llm=None) -> ContextRAG:
 def from_env() -> ContextRAG:
     """Backends are chosen by env vars:
 
-    EMBEDDER=hashing|bge (EMBED_MODEL)   RERANKER=lexical|cross-encoder|cohere (COHERE_API_KEY)
+    EMBEDDER=hashing|bge (EMBED_MODEL)   RERANKER=lexical|cross-encoder|cohere (COHERE_API_KEY, RERANK_MIN_SCORE: relevance floor)
     NLI=lexical|deberta                  LLM=extractive|anthropic|ollama (LLM_MODEL, OLLAMA_HOST)
     QDRANT_URL (else embedded in-memory)  POSTGRES_DSN (else in-memory audit)  REDIS_URL (else in-memory cache)
     MASTER_KEY (enables per-tenant encryption of chunk text at rest)  CONTEXTRAG_* (see Settings)
@@ -65,11 +69,12 @@ def from_env() -> ContextRAG:
     if rer == "cohere":
         from .retrieval.reranker import CohereReranker
 
-        reranker = CohereReranker(env("COHERE_API_KEY"))
+        reranker = CohereReranker(env("COHERE_API_KEY"), min_score=_opt_float(env("RERANK_MIN_SCORE")))
     elif rer == "cross-encoder":
         from .retrieval.reranker import CrossEncoderReranker
 
-        reranker = CrossEncoderReranker(env("RERANK_MODEL", "BAAI/bge-reranker-large"))
+        reranker = CrossEncoderReranker(env("RERANK_MODEL", "BAAI/bge-reranker-large"),
+                                        min_score=_opt_float(env("RERANK_MIN_SCORE")))
     else:
         reranker = LexicalReranker()
 

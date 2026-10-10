@@ -52,15 +52,21 @@ class Ingestor:
     def ingest(self, doc: LoadedDocument, *, tenant: str, doc_id: str, source: str | None = None,
                acl: tuple[str, ...] = ()) -> dict:
         """Index (replacing any previous version of) a document."""
-        self.index.delete_document(tenant, doc_id)
         parents, children = chunk_document(
             doc.text, doc_id=doc_id, tenant=tenant, source=source or doc_id, kind=doc.kind, acl=acl,
             page_starts=doc.page_starts or None, settings=self.cfg)
         vectors = self.embedder.embed([c.text for c in children]) if children else []
-        self.index.add(parents, children, vectors)
-        if self.cache:  # invalidate cached query results for this tenant
-            self.cache.incr(f"epoch:{tenant}")
+        self.index.replace_document(tenant, doc_id, parents, children, vectors)
+        self._invalidate(tenant)
         return {"doc_id": doc_id, "kind": doc.kind, "parents": len(parents), "children": len(children)}
+
+    def delete(self, *, tenant: str, doc_id: str) -> None:
+        self.index.delete_document(tenant, doc_id)
+        self._invalidate(tenant)
+
+    def _invalidate(self, tenant: str) -> None:
+        if self.cache:  # cached query results for this tenant are now stale
+            self.cache.incr(f"epoch:{tenant}")
 
     def ingest_text(self, text: str, *, tenant: str, doc_id: str, source: str | None = None, kind: str | None = None,
                     acl: tuple[str, ...] = ()) -> dict:

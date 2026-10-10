@@ -222,3 +222,64 @@ def test_cached_embedder_only_computes_misses():
     assert inner.calls == ["uno", "dos", "tres"]
     assert b[0] == a[1] and b[2] == a[0]
     assert math.isclose(sum(x * x for x in b[1]), 1.0, rel_tol=1e-6)
+
+
+def test_concurrent_ingest_and_query_are_safe_and_never_lose_the_document():
+    import threading
+
+    index, r = build()
+    errors, stop = [], threading.Event()
+
+    def writer(n):
+        try:
+            for i in range(40):
+                p, c = chunk_document(f"El código {n} vive en el anexo {i % 3}.", doc_id=f"w{n}-{i % 3}", tenant="acme", source="w")
+                index.replace_document("acme", f"w{n}-{i % 3}", p, c, r.embedder.embed([x.text for x in c]))
+        except Exception as e:
+            errors.append(e)
+
+    def reader():
+        try:
+            while not stop.is_set():
+                # audit.md is never touched by the writers: it must be found on every single query
+                assert r.retrieve("registros de auditoría", "acme")[0].parent.doc_id == "audit.md"
+        except Exception as e:
+            errors.append(e)
+
+    ws = [threading.Thread(target=writer, args=(n,)) for n in range(3)]
+    rs = [threading.Thread(target=reader) for _ in range(3)]
+    [t.start() for t in ws + rs]
+    [t.join() for t in ws]
+    stop.set()
+    [t.join() for t in rs]
+    assert errors == []
+
+
+def test_replacing_a_document_never_exposes_a_gap():
+    import threading
+    import time
+
+    index, r = build()
+    real_add = index.store.add
+
+    def slow_add(*a, **k):  # widen the race window so a non-atomic replace is reliably caught
+        time.sleep(0.002)
+        real_add(*a, **k)
+
+    index.store.add = slow_add
+    gaps, stop = [], threading.Event()
+
+    def churn():
+        for _ in range(40):
+            p, c = chunk_document(DOCS["crypto.md"], doc_id="crypto.md", tenant="acme", source="crypto.md")
+            index.replace_document("acme", "crypto.md", p, c, r.embedder.embed([x.text for x in c]))
+        stop.set()
+
+    def watch():
+        while not stop.is_set():
+            if not any(c.parent.doc_id == "crypto.md" for c in r.retrieve("AES-256 cifran claves", "acme")):
+                gaps.append(1)
+
+    t1, t2 = threading.Thread(target=churn), threading.Thread(target=watch)
+    t2.start(); t1.start(); t1.join(); t2.join()
+    assert gaps == []

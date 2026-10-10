@@ -29,3 +29,6 @@ include = ["contextrag*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = ["ignore::UserWarning:qdrant_client", "ignore::DeprecationWarning"]
+
+[tool.setuptools.package-data]
+"contextrag.eval" = ["data/*.json"]

@@ -1,0 +1,21 @@
+name: ci
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install Redis and PostgreSQL (integration tests skip themselves if absent)
+        run: sudo apt-get update && sudo apt-get install -y redis-server postgresql
+      - run: pip install -e ".[dev,api]"
+      - run: pytest -q
+      - name: Safety evaluation (fails on any unsupported claim approved or unsafe answer)
+        run: python -m contextrag eval

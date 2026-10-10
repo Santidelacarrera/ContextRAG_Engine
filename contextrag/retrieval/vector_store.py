@@ -5,6 +5,7 @@ Tenant isolation and group ACLs are enforced inside the query (never post-hoc), 
 """
 from __future__ import annotations
 
+import threading
 import uuid
 from typing import Iterator, Protocol, Sequence
 
@@ -28,36 +29,43 @@ class VectorStore(Protocol):
 
 
 class InMemoryVectorStore:
-    """Reference implementation: exact cosine search (vectors are expected L2-normalised)."""
+    """Reference implementation: exact cosine search (vectors are expected L2-normalised). Thread-safe."""
 
     def __init__(self):
         self._parents: dict[str, ParentChunk] = {}
         self._children: dict[str, ChildChunk] = {}
         self._vecs: dict[str, Sequence[float]] = {}
+        self._lock = threading.RLock()
 
     def add(self, parents, children, vectors):
-        for p in parents:
-            self._parents[p.id] = p
-        for c, v in zip(children, vectors, strict=True):
-            self._children[c.id], self._vecs[c.id] = c, v
+        with self._lock:
+            for p in parents:
+                self._parents[p.id] = p
+            for c, v in zip(children, vectors, strict=True):
+                self._children[c.id], self._vecs[c.id] = c, v
 
     def dense(self, vec, tenant, groups, k):
-        scored = [(c, sum(a * b for a, b in zip(vec, self._vecs[c.id])))
-                  for c in self._children.values() if c.tenant == tenant and visible(c.acl, groups)]
+        with self._lock:
+            cands = [(c, self._vecs[c.id]) for c in self._children.values()
+                     if c.tenant == tenant and visible(c.acl, groups)]
+        scored = [(c, sum(a * b for a, b in zip(vec, v))) for c, v in cands]
         return sorted(scored, key=lambda x: -x[1])[:k]
 
     def parent(self, parent_id, tenant):
-        p = self._parents.get(parent_id)
+        with self._lock:
+            p = self._parents.get(parent_id)
         return p if p and p.tenant == tenant else None
 
     def iter_children(self, tenant=None):
-        return iter([c for c in self._children.values() if tenant is None or c.tenant == tenant])
+        with self._lock:
+            return iter([c for c in self._children.values() if tenant is None or c.tenant == tenant])
 
     def delete_document(self, tenant, doc_id):
-        for cid in [c.id for c in self._children.values() if c.tenant == tenant and c.doc_id == doc_id]:
-            del self._children[cid], self._vecs[cid]
-        for pid in [p.id for p in self._parents.values() if p.tenant == tenant and p.doc_id == doc_id]:
-            del self._parents[pid]
+        with self._lock:
+            for cid in [c.id for c in self._children.values() if c.tenant == tenant and c.doc_id == doc_id]:
+                del self._children[cid], self._vecs[cid]
+            for pid in [p.id for p in self._parents.values() if p.tenant == tenant and p.doc_id == doc_id]:
+                del self._parents[pid]
 
     def health(self):
         return True

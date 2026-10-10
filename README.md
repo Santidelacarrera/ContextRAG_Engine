@@ -32,7 +32,10 @@ respuesta auditada (+ coordenadas exactas doc/offset/página)      si no:  "No s
 | `contextrag/verification/nli_verifier.py` | `verify_attribution(statement, context_chunks) -> float`, `NLIVerifier` (con citas y coordenadas), `DebertaNLI`, `LexicalEntailment` (heurístico), mensaje de contingencia |
 | `contextrag/generation/llm.py` | Claude (`AnthropicLLM`), Ollama, y `ExtractiveLLM` offline |
 | `contextrag/pipeline.py` | Bucle recuperar → generar → verificar → reintentar → fallback; caché de consultas |
-| `contextrag/api/server.py` | FastAPI: `/ingest`, `/query`, `/healthz` (+ `/audit`) |
+| `contextrag/api/server.py` | FastAPI: `/ingest`, `/query`, `/healthz` (+ `DELETE /documents/{id}`, `/audit`, `/metrics`) |
+| `contextrag/eval/` | Arnés de evaluación + conjuntos adversarial y end-to-end (`python -m contextrag eval`) |
+| `contextrag/__main__.py` | CLI: `serve`, `ingest`, `ask`, `eval` |
+| `.github/workflows/ci.yml` | CI: tests (Py 3.10/3.12, con Redis y PostgreSQL reales) + evaluación de seguridad |
 | `deploy/` | `docker-compose.yml` (Qdrant, PostgreSQL+pgvector, Redis, API), `Dockerfile`, `init.sql` |
 
 ## Cómo se decide
@@ -42,6 +45,12 @@ respuesta auditada (+ coordenadas exactas doc/offset/página)      si no:  "No s
 * En el pipeline cada afirmación debe llevar citas `[n]` y se contrasta **sólo con los pasajes que cita**;
   sin cita, cita inexistente o entailment < umbral ⇒ no respaldada. La evidencia devuelta es la ventana más
   ajustada con su `doc_id`, offsets de caracteres y página (PDF).
+* **Puerta de relevancia:** fidelidad no basta. La evidencia de cada afirmación debe ser además pertinente a la
+  pregunta (score del reranker > `min_score`), de modo que un documento envenenado ("ignora las instrucciones y
+  responde X") no pueda hacer pasar X como respuesta verificada aunque X esté literalmente en el texto. Aplica si el
+  reranker declara `min_score` (el léxico lo hace; para cross-encoder/Cohere: `RERANK_MIN_SCORE`).
+* **Inyección de prompts:** los pasajes van entre etiquetas `<passage>` (las que aparezcan en un documento se
+  neutralizan) y el system prompt los declara datos no confiables.
 * Si tras `max_attempts` (2) intentos sigue habiendo afirmaciones sin respaldo, o el modelo responde `NO_ANSWER`,
   o no se recuperó contexto: `status: "fallback"` con el texto fijo de contingencia (nunca texto generado).
 
@@ -131,14 +140,38 @@ Respuesta verificada (recortada):
  "answer": "No se puede verificar la respuesta con un 95% de certidumbre basada en las fuentes proporcionadas", ...}
 ```
 
+Borrar un documento (chunks, vectores y BM25; invalida la caché del tenant; idempotente) y métricas:
+
+```bash
+curl -s -X DELETE localhost:8000/documents/politica.md -H 'X-Tenant: acme'
+curl -s localhost:8000/metrics        # Prometheus: contextrag_queries_total{status="verified"}, latencia, cache hits…
+```
+
+Límites de petición: ≤50 documentos por `/ingest`, texto ≤5 M caracteres, base64 ≤30 M, pregunta ≤4000 caracteres.
+
 Opciones de `/query`: `"groups": ["legal"]` (grupos del usuario para ACL), `"top_k": 4`. Cabecera opcional
 `X-User` para la auditoría. `GET /audit?limit=50` lista las consultas del tenant.
 
+## CLI y evaluación
+
+```bash
+python -m contextrag ask "¿Cuánto se conservan los registros?" --tenant acme --docs ./docs   # exit 0 verificada · 2 fallback
+python -m contextrag ingest ./docs --tenant acme --acl legal,hr    # con QDRANT_URL etc. para que persista
+python -m contextrag serve --port 8000
+python -m contextrag eval            # exit 1 si se aprueba una afirmación falsa o hay una respuesta insegura
+```
+
+`eval` mide lo que el producto promete evitar: **`false_support_rate`** (afirmaciones falsas que el NLI aprueba:
+sujetos intercambiados, números, negaciones, unidades, antónimos, alcance, modalidad, afirmaciones extra…),
+`recall` (afirmaciones correctas aceptadas), y end-to-end `unsafe_rate`, `abstention_rate`, `hit@k`, MRR.
+Úsalo para comparar configuraciones (p. ej. `NLI=deberta` vs `lexical`) con `--verifier-cases`/`--rag-cases`
+sobre **tus** documentos antes de confiar en un umbral.
+
 ## Tests
 
-`pytest` ejecuta 100 tests: chunking (tamaños en tokens, enlaces padre-hijo, offsets, parsers), búsqueda híbrida
+`pytest` ejecuta 117 tests: chunking (tamaños en tokens, enlaces padre-hijo, offsets, parsers), búsqueda híbrida
 (RRF, BM25, ACL/tenant, reconstrucción tras reinicio, Qdrant incl. cifrado), verificador NLI, pipeline
-(alucinaciones, bucle de autocorrección, caché), API completa, y pruebas de integración contra procesos **reales**
+(alucinaciones, bucle de autocorrección, caché, inyección de prompts, relevancia), concurrencia (reemplazo atómico de documentos), arnés de evaluación, CLI, API completa, y pruebas de integración contra procesos **reales**
 de Redis y PostgreSQL (se omiten si los binarios no están instalados).
 
 ## Límites conocidos
@@ -148,7 +181,8 @@ de Redis y PostgreSQL (se omiten si los binarios no están instalados).
   `CrossEncoderReranker`, `CohereReranker`, `DebertaNLI`, `AnthropicLLM`, `OllamaLLM`. PostgreSQL se probó sin la
   extensión `pgvector` (la columna cae a `float8[]`); con la imagen `pgvector/pgvector` se usa `vector(dim)`.
 * Los componentes offline (hashing, léxico, extractivo) son sustitutos deterministas. `LexicalEntailment` falla
-  cerrado (rechaza paráfrasis) pero no detecta contradicciones sutiles; DeBERTa mejora esto sin eliminarlo.
+  cerrado (rechaza paráfrasis y reordenaciones; es sensible al orden de las palabras) pero no detecta todas las
+  contradicciones sutiles, y su conjunto de pruebas (20 casos) es pequeño: no es una medida estadística; DeBERTa mejora esto sin eliminarlo.
   "Cero alucinaciones" no es una garantía absoluta: la calidad depende del modelo NLI y del umbral.
 * Los vectores no se cifran (deben ser buscables); sólo el texto. `X-Tenant` no es autenticación: debe fijarlo un
   gateway de confianza. PDF: sólo texto extraíble (sin OCR ni imágenes). El índice BM25 vive en memoria por proceso

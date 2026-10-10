@@ -38,13 +38,36 @@ _NEG = {"no", "not", "never", "none", "without", "cannot", "nunca", "sin", "tamp
 _NUM = re.compile(r"\d+(?:[.,]\d+)?")
 
 
+def _align(h: list[str], p: list[str]) -> list[int]:
+    """Indices into ``p`` of a longest common subsequence of ``h`` and ``p`` (DP with traceback)."""
+    n, m = len(h), len(p)
+    t = [[0] * (m + 1) for _ in range(n + 1)]
+    for i in range(n - 1, -1, -1):
+        for j in range(m - 1, -1, -1):
+            t[i][j] = t[i + 1][j + 1] + 1 if h[i] == p[j] else max(t[i + 1][j], t[i][j + 1])
+    i = j = 0
+    out = []
+    while i < n and j < m:
+        if h[i] == p[j]:
+            out.append(j)
+            i += 1
+            j += 1
+        elif t[i + 1][j] >= t[i][j + 1]:
+            i += 1
+        else:
+            j += 1
+    return out
+
+
 class LexicalEntailment:
     """Conservative heuristic NLI usable offline.
 
-    Score is the share of the hypothesis' content terms found in the premise. It drops to 0 if
-    the hypothesis introduces a number the premise lacks, or flips negation. It rejects honest
-    paraphrase (fails closed) and cannot detect subtle contradictions; use ``DebertaNLI`` for
-    semantic entailment in production.
+    Score = (longest in-order run of the hypothesis' content terms found in the premise) / (number of
+    hypothesis content terms). Being order-sensitive, "Luis aprobó a Ana" is NOT entailed by "Ana aprobó a
+    Luis". The score is 0 if the hypothesis introduces a number the premise lacks, or if negation differs
+    between the hypothesis and the stretch of the premise it aligns to (a negation in an unrelated clause
+    of the same sentence is ignored). It rejects honest paraphrase and re-ordering (fails closed) and cannot
+    detect every subtle contradiction; use ``DebertaNLI`` for semantic entailment in production.
     """
 
     def entailment(self, pairs):
@@ -52,15 +75,18 @@ class LexicalEntailment:
 
     @staticmethod
     def _one(premise: str, hyp: str) -> float:
-        h = {stem(t) for t in content_tokens(hyp)}
+        h = [stem(t) for t in content_tokens(hyp)]
         if not h:
             return 0.0
-        p = {stem(t) for t in content_tokens(premise)}
+        p = [stem(t) for t in content_tokens(premise)]
         if set(_NUM.findall(hyp)) - set(_NUM.findall(premise)):
             return 0.0
-        if bool(_NEG & set(tokenize(hyp))) != bool(_NEG & set(tokenize(premise))):
+        idx = _align(h, p)
+        if not idx:
             return 0.0
-        return len(h & p) / len(h)
+        if bool(_NEG & set(h)) != bool(_NEG & set(p[idx[0] : idx[-1] + 1])):
+            return 0.0
+        return len(idx) / len(h)
 
 
 class DebertaNLI:

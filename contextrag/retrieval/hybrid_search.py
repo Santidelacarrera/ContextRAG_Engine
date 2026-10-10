@@ -1,6 +1,7 @@
 """Hybrid retrieval: dense (vector store) + sparse (BM25) -> RRF -> cross-encoder rerank -> parent chunks."""
 from __future__ import annotations
 
+import threading
 from typing import Sequence
 
 from ..core.config import Settings
@@ -27,14 +28,23 @@ class HybridIndex:
     def __init__(self, store: VectorStore, bm25: BM25Index | None = None):
         self.store = store
         self.bm25 = bm25 or BM25Index(loader=lambda tenant: store.iter_children(tenant))
+        self.lock = threading.RLock()  # makes replace_document atomic with respect to search
 
     def add(self, parents: Sequence[ParentChunk], children: Sequence[ChildChunk], vectors) -> None:
-        self.store.add(parents, children, vectors)
-        self.bm25.add(children)
+        with self.lock:
+            self.store.add(parents, children, vectors)
+            self.bm25.add(children)
 
     def delete_document(self, tenant: str, doc_id: str) -> None:
-        self.store.delete_document(tenant, doc_id)
-        self.bm25.delete_document(tenant, doc_id)
+        with self.lock:
+            self.store.delete_document(tenant, doc_id)
+            self.bm25.delete_document(tenant, doc_id)
+
+    def replace_document(self, tenant: str, doc_id: str, parents, children, vectors) -> None:
+        """Delete the previous version and index the new one without a visible gap."""
+        with self.lock:
+            self.delete_document(tenant, doc_id)
+            self.add(parents, children, vectors)
 
     def health(self) -> bool:
         return self.store.health()
@@ -46,8 +56,9 @@ class HybridRetriever:
 
     def search_children(self, query: str, tenant: str, groups: frozenset[str] = frozenset()) -> list[tuple[ChildChunk, float]]:
         qvec = self.embedder.embed([query])[0]
-        dense = [c for c, _ in self.index.store.dense(qvec, tenant, groups, self.cfg.dense_k)]
-        sparse = [c for c, _ in self.index.bm25.search(query, tenant, groups, self.cfg.sparse_k)]
+        with self.index.lock:
+            dense = [c for c, _ in self.index.store.dense(qvec, tenant, groups, self.cfg.dense_k)]
+            sparse = [c for c, _ in self.index.bm25.search(query, tenant, groups, self.cfg.sparse_k)]
         return reciprocal_rank_fusion([dense, sparse], self.cfg.rrf_k)
 
     def retrieve(self, query: str, tenant: str, groups: frozenset[str] = frozenset(),
