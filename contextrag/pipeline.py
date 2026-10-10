@@ -13,7 +13,7 @@ from .core.cache import Cache
 from .core.config import Settings
 from .core.ingestion import Ingestor
 from .core.models import Answer, Status
-from .generation.llm import LLM, NO_ANSWER
+from .generation.llm import LLM, NO_ANSWER, GenerationError
 from .retrieval.hybrid_search import HybridIndex, HybridRetriever
 from .retrieval.reranker import Reranker
 from .verification.nli_verifier import NLIModel, NLIVerifier, fallback_message
@@ -99,7 +99,12 @@ class ContextRAG:
 
         feedback, attempts, verdicts = None, 0, []
         for attempts in range(1, self.cfg.max_attempts + 1):
-            text = self.llm.generate(question, contexts, feedback).strip()
+            try:
+                text = self.llm.generate(question, contexts, feedback).strip()
+            except GenerationError:
+                raise
+            except Exception as e:
+                raise GenerationError(f"{type(e).__name__}: {e}") from e
             if not text or text == NO_ANSWER:
                 return self._fallback(question, contexts, [], attempts, "model reported insufficient context")
             verdicts = self._relevance_gate(question, self.verifier.verify(text, contexts))
@@ -119,7 +124,7 @@ class ContextRAG:
         checked = [v for v in verdicts if v.supported and v.evidence]
         if floor is None or not checked:
             return verdicts
-        for v, s in zip(checked, self.reranker.score(question, [v.evidence.text for v in checked])):
+        for v, s in zip(checked, self.reranker.score(question, [v.evidence.text for v in checked]), strict=True):
             if s <= floor:
                 v.supported, v.evidence, v.reason = False, None, "evidence not relevant to the question"
         return verdicts

@@ -219,7 +219,7 @@ class QdrantVectorStore:
             self.client.delete(col, qm.FilterSelector(filter=flt))
 
     def list_documents(self, tenant):
-        qm, offset, parents = self.qm, None, []
+        offset, parents = None, []
         flt = self._tenant_filter(tenant)
         while True:
             pts, offset = self.client.scroll(self.pcol, scroll_filter=flt, limit=256, offset=offset, with_payload=True)

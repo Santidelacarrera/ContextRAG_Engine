@@ -23,7 +23,8 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
-from ..core.ingestion import LoadedDocument, load_base64
+from ..core.ingestion import EmptyDocumentError, from_text, load_base64
+from ..generation.llm import GenerationError
 from ..pipeline import ContextRAG
 from .auth import KeyStore
 from .ratelimit import RateLimiter
@@ -74,6 +75,13 @@ def create_app(rag: ContextRAG | None = None, keystore: KeyStore | None = None,
     limiter = RateLimiter(rate_limit_per_min) if rate_limit_per_min else None
     if keystore is None and not os.getenv("CONTEXTRAG_API_KEY"):
         log.warning("API is running without authentication (set CONTEXTRAG_KEYS_FILE or CONTEXTRAG_API_KEY)")
+
+    @app.exception_handler(GenerationError)
+    async def generation_unavailable(request, exc):
+        log.error("generation failed: %s", exc)
+        return JSONResponse({"error": "generation_unavailable",
+                             "detail": "the language model could not be reached; no answer was produced"},
+                            status_code=503, headers={"Retry-After": "5"})
 
     def get_rag() -> ContextRAG:
         if state["rag"] is None:
@@ -131,16 +139,18 @@ def create_app(rag: ContextRAG | None = None, keystore: KeyStore | None = None,
                 raise HTTPException(422, f"{d.doc_id}: provide exactly one of text / content_base64")
             name = d.source or d.doc_id
             try:
-                doc = (LoadedDocument(d.text, d.kind or _kind(name)) if d.text is not None
-                       else load_base64(d.content_base64, name))
-                if d.kind and doc.kind != "pdf":
+                doc = from_text(d.text, name, d.kind) if d.text is not None else load_base64(d.content_base64, name)
+                if d.kind and d.text is None and doc.kind != "pdf":
                     doc.kind = d.kind
             except (binascii.Error, ValueError) as e:
                 raise HTTPException(422, f"{d.doc_id}: invalid content ({e})")
             except Exception as e:  # unreadable PDF etc.
                 raise HTTPException(422, f"{d.doc_id}: could not parse document ({type(e).__name__})")
-            results.append(rag.ingestor.ingest(doc, tenant=c.tenant, doc_id=d.doc_id, source=name,
-                                               acl=tuple(d.acl), force=d.force))
+            try:
+                results.append(rag.ingestor.ingest(doc, tenant=c.tenant, doc_id=d.doc_id, source=name,
+                                                   acl=tuple(d.acl), force=d.force))
+            except EmptyDocumentError as e:
+                raise HTTPException(422, str(e))
         return {"tenant": c.tenant, "documents": results}
 
     @app.post("/query")
@@ -178,13 +188,6 @@ def create_app(rag: ContextRAG | None = None, keystore: KeyStore | None = None,
         return log_.list(c.tenant, max(1, min(limit, 500)))
 
     return app
-
-
-def _kind(name: str) -> str:
-    from ..core.chunking import detect_kind
-
-    k = detect_kind(name)
-    return "text" if k == "pdf" else k
 
 
 def app_factory() -> FastAPI:

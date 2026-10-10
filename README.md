@@ -24,7 +24,7 @@ respuesta auditada (+ coordenadas exactas doc/offset/página)      si no:  "No s
 | Ruta | Contenido |
 |---|---|
 | `contextrag/core/chunking.py` | Parsers estructurales (Markdown con ruta de encabezados y bloques de código intactos, código por definiciones, texto por párrafos) y chunking padre/hijo medido en **tokens** (`\w+|[^\w\s]`); offsets absolutos de caracteres |
-| `contextrag/core/ingestion.py` | Carga de PDF (con mapa de páginas), Markdown, texto y código; `Ingestor` (idempotente: no reindexa documentos sin cambios; reemplazo atómico en cambios) |
+| `contextrag/core/ingestion.py` | Carga de PDF (con mapa de páginas), HTML (texto visible; `<h1>`–`<h6>` → secciones), Markdown, texto y código; rechaza documentos sin texto extraíble (PDF escaneado) en vez de indexar nada en silencio; `Ingestor` (idempotente: no reindexa documentos sin cambios; reemplazo atómico en cambios) |
 | `contextrag/retrieval/vector_store.py` | `QdrantVectorStore` (filtro de tenant/ACL **dentro** de la consulta, cifrado opcional del texto por tenant) e `InMemoryVectorStore` |
 | `contextrag/retrieval/bm25.py` | BM25 local por tenant: `BM25Index` (`rank_bm25`, por defecto) e `IncrementalBM25Index` (mismas puntuaciones, actualizable in situ); ambos se reconstruyen desde Qdrant tras un reinicio |
 | `contextrag/retrieval/hybrid_search.py` | RRF, `HybridIndex` (Qdrant+BM25 sincronizados) y `HybridRetriever` (rerank → padres top-K) |
@@ -174,12 +174,19 @@ curl -s localhost:8000/documents -H 'X-Tenant: acme'   # documentos indexados (d
 curl -s localhost:8000/metrics        # Prometheus: contextrag_queries_total{status="verified"}, latencia, cache hits…
 ```
 
+Códigos de error: `422` documento ilegible o **sin texto extraíble** (p. ej. PDF escaneado: la versión previa del
+documento queda intacta), `401/403` autenticación/rol/tenant, `429` límite de tasa, `503` + `Retry-After` si el LLM no
+responde (error de generación: no se muestra el texto de contingencia porque no hubo verificación fallida, sólo una
+caída; el detalle se registra en logs y no se devuelve al cliente).
+
 Límites de petición: ≤50 documentos por `/ingest`, texto ≤5 M caracteres, base64 ≤30 M, pregunta ≤4000 caracteres.
 
 Opciones de `/query`: `"groups": ["legal"]` (grupos del usuario para ACL), `"top_k": 4`. Cabecera opcional
 `X-User` para la auditoría. `GET /audit?limit=50` lista las consultas del tenant.
 
 ## CLI y evaluación
+
+Tras `pip install .` existe el comando `contextrag` (equivale a `python -m contextrag`).
 
 ```bash
 python -m contextrag ask "¿Cuánto se conservan los registros?" --tenant acme --docs ./docs   # exit 0 verificada · 2 fallback
@@ -198,7 +205,7 @@ sobre **tus** documentos antes de confiar en un umbral.
 
 ## Tests
 
-`pytest` ejecuta 156 tests: chunking (tamaños en tokens, enlaces padre-hijo, offsets, parsers), búsqueda híbrida
+`pytest` ejecuta 167 tests (158 + 2 omitidos si no están instalados torch/transformers; `ruff check` limpio): chunking (tamaños en tokens, enlaces padre-hijo, offsets, parsers), búsqueda híbrida
 (RRF, BM25, ACL/tenant, reconstrucción tras reinicio, Qdrant incl. cifrado), verificador NLI, pipeline
 (alucinaciones, bucle de autocorrección, caché, inyección de prompts, relevancia), concurrencia (reemplazo atómico de documentos), arnés de evaluación, CLI, autenticación por clave/roles/ACL, límite de tasa, ingesta idempotente, API completa, y pruebas de integración contra procesos **reales**
 de Redis y PostgreSQL, y contra el código real de `transformers`/`sentence-transformers`/`torch` (`DebertaNLI`,

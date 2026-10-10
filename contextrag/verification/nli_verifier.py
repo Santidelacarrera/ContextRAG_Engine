@@ -15,7 +15,7 @@ import re
 from typing import Protocol, Sequence
 
 from ..core.models import ClaimVerdict, Context, Evidence
-from ..core.text import content_tokens, split_sentences, stem, tokenize
+from ..core.text import content_tokens, split_sentences, stem
 
 DEFAULT_THRESHOLD = 0.95
 MAX_WINDOW = 3  # evidence windows span 1..3 consecutive sentences
@@ -147,6 +147,12 @@ def _windows(text: str, base: int):
             yield " ".join(s for s, _, _ in grp), grp[0][1], grp[-1][2]
 
 
+def _term_overlap(claim: str, window: str) -> float:
+    """Share of the claim's content terms present in the window (used only to pick which span to report)."""
+    c = {stem(t) for t in content_tokens(claim)}
+    return len(c & {stem(t) for t in content_tokens(window)}) / len(c) if c else 0.0
+
+
 # ---- standalone score --------------------------------------------------------------------
 
 def verify_attribution(statement: str, context_chunks: Sequence[str], nli: NLIModel | None = None) -> float:
@@ -194,10 +200,8 @@ class NLIVerifier:
             top = max(scores)
             floor = max(self.threshold, top - EVIDENCE_TOLERANCE) if top >= self.threshold else top
             eligible = [i for i in range(len(scores)) if scores[i] >= floor]
-            claim_terms = {stem(t) for t in content_tokens(claim)}
-            overlap = lambda i: (len(claim_terms & {stem(t) for t in content_tokens(cand[i][0])}) / len(claim_terms)
-                                 if claim_terms else 0.0)
-            best = max(eligible, key=lambda i: (round(overlap(i), 6), -len(cand[i][0]), scores[i]))
+            sim = [_term_overlap(claim, cand[i][0]) for i in range(len(cand))]
+            best = max(eligible, key=lambda i: (round(sim[i], 6), -len(cand[i][0]), scores[i]))
             w, s, e, ctx = cand[best]
             ok = scores[best] >= self.threshold
             p = ctx.parent

@@ -43,6 +43,8 @@ def detect_kind(name: str) -> str:
     suffix = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
     if suffix == ".pdf":
         return "pdf"
+    if suffix in (".html", ".htm", ".xhtml"):
+        return "html"
     if suffix in MARKDOWN_SUFFIXES:
         return "markdown"
     if suffix in CODE_SUFFIXES:

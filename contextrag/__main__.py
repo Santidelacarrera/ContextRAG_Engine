@@ -42,7 +42,7 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--json", action="store_true", help="print machine-readable results")
 
     args = ap.parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s", stream=sys.stderr)
+    logging.basicConfig(level=logging.WARNING if args.cmd == "eval" else logging.INFO, format="%(asctime)s %(name)s %(message)s", stream=sys.stderr)
     csv = lambda v: tuple(x for x in v.split(",") if x)
 
     if args.cmd == "serve":

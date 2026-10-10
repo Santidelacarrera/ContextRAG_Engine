@@ -91,7 +91,7 @@ class CachedEmbedder:
             else:
                 out[i] = json.loads(hit)
         if missing:
-            for i, v in zip(missing, self.inner.embed([texts[i] for i in missing])):
+            for i, v in zip(missing, self.inner.embed([texts[i] for i in missing]), strict=True):
                 out[i] = v
                 self.cache.set(self._key(texts[i]), json.dumps(v), self.ttl)
         return out  # type: ignore[return-value]

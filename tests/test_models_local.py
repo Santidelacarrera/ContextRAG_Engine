@@ -13,7 +13,7 @@ from transformers import BertConfig, BertForSequenceClassification, BertTokenize
 from contextrag import Status, factory
 from contextrag.core.embeddings import SentenceTransformerEmbedder
 from contextrag.retrieval.reranker import CrossEncoderReranker
-from contextrag.verification.nli_verifier import DebertaNLI, NLIVerifier, verify_attribution
+from contextrag.verification.nli_verifier import DebertaNLI, verify_attribution
 from conftest import POLICY
 
 WORDS = ("los registros de auditoría se conservan durante 7 años el cielo es azul las claves rotan cada 12 meses "

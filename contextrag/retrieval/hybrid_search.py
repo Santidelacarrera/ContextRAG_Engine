@@ -75,7 +75,7 @@ class HybridRetriever:
             return []
         scores = self.reranker.score(query, [c.text for c, _ in fused])
         best: dict[str, float] = {}
-        for (child, _), s in zip(fused, scores):
+        for (child, _), s in zip(fused, scores, strict=True):
             best[child.parent_id] = max(s, best.get(child.parent_id, float("-inf")))
         floor = getattr(self.reranker, "min_score", None)
         contexts: list[Context] = []

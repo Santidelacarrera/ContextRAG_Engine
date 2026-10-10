@@ -1,5 +1,4 @@
 from contextrag import Status, factory
-from contextrag.core.cache import InMemoryCache
 from contextrag.core.models import Answer
 from contextrag.generation.llm import ExtractiveLLM
 from contextrag.verification.nli_verifier import fallback_message

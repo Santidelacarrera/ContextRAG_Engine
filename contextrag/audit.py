@@ -105,7 +105,7 @@ class PostgresAudit:
                FROM answer_audit WHERE tenant = %s ORDER BY ts DESC LIMIT %s""", (tenant, limit))
         keys = ("id", "ts", "user", "question", "status", "answer", "confidence", "attempts", "reason",
                 "cached", "claims", "sources")
-        return [{**dict(zip(keys, r)), "id": str(r[0]), "tenant": tenant} for r in cur.fetchall()]
+        return [{**dict(zip(keys, r, strict=True)), "id": str(r[0]), "tenant": tenant} for r in cur.fetchall()]
 
     def health(self):
         try:

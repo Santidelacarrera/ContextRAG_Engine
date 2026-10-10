@@ -1,0 +1,19 @@
+{
+  "documents": [
+    {"doc_id": "politica.md", "text": "# Retención de datos\n\nLa política de retención establece que los registros de auditoría se conservan durante 7 años. Los registros de acceso se eliminan a los 90 días.\n\n# Cifrado\n\nTodos los datos en reposo se cifran con AES-256. Las claves se rotan cada 12 meses."},
+    {"doc_id": "hr.md", "text": "# Vacation policy\n\nEmployees receive 25 vacation days per year. Unused days expire on March 31."},
+    {"doc_id": "api.md", "text": "# API limits\n\nThe default API timeout is 30 seconds. Requests above 10 MB are rejected."},
+    {"doc_id": "config.py", "text": "def retry_limit():\n    # El límite de reintentos es 5.\n    return 5\n"}
+  ],
+  "cases": [
+    {"id": "a1", "question": "¿Cuánto tiempo se conservan los registros de auditoría?", "answerable": true, "expect": "7 años", "doc": "politica.md"},
+    {"id": "a2", "question": "¿Cada cuánto se rotan las claves?", "answerable": true, "expect": "12 meses", "doc": "politica.md"},
+    {"id": "a3", "question": "How many vacation days do employees get?", "answerable": true, "expect": "25", "doc": "hr.md"},
+    {"id": "a4", "question": "What is the default API timeout?", "answerable": true, "expect": "30 seconds", "doc": "api.md"},
+    {"id": "a5", "question": "¿Cuál es el límite de reintentos?", "answerable": true, "expect": "5", "doc": "config.py"},
+    {"id": "u1", "question": "¿Quién ganó el mundial de 1998?", "answerable": false},
+    {"id": "u2", "question": "What is the CEO's salary?", "answerable": false},
+    {"id": "u3", "question": "¿Cuál es el teléfono de soporte?", "answerable": false},
+    {"id": "u4", "question": "xyzzy plugh", "answerable": false}
+  ]
+}
