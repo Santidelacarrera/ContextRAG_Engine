@@ -7,9 +7,9 @@ import os
 import urllib.request
 from typing import Protocol, Sequence
 
-from .models import Context
-from .rerank import LexicalReranker
-from .text import split_sentences
+from ..core.models import Context
+from ..retrieval.reranker import LexicalReranker
+from ..core.text import split_sentences
 
 NO_ANSWER = "NO_ANSWER"
 

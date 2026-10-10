@@ -1,0 +1,147 @@
+import base64
+
+import pytest
+
+pytest.importorskip("fastapi")
+from fastapi.testclient import TestClient
+
+from contextrag import factory
+from contextrag.api.server import create_app
+from conftest import POLICY, make_pdf
+
+H = {"X-Tenant": "acme"}
+
+
+@pytest.fixture
+def client():
+    return TestClient(create_app(factory.offline()))
+
+
+def ingest(client, **doc):
+    doc.setdefault("doc_id", "policy.md")
+    return client.post("/ingest", json={"documents": [doc]}, headers=H)
+
+
+def test_healthz(client):
+    r = client.get("/healthz")
+    assert r.status_code == 200 and r.json() == {"status": "ok", "components": {"index": True, "cache": True, "audit": True}}
+
+
+def test_healthz_reports_degraded_component_with_503():
+    rag = factory.offline()
+    rag.cache.health = lambda: False
+    r = TestClient(create_app(rag)).get("/healthz")
+    assert r.status_code == 503 and r.json()["status"] == "degraded" and r.json()["components"]["cache"] is False
+
+
+def test_healthz_unavailable_when_backend_cannot_start(monkeypatch):
+    monkeypatch.setattr(factory, "from_env", lambda: (_ for _ in ()).throw(RuntimeError("qdrant down")))
+    r = TestClient(create_app()).get("/healthz")
+    assert r.status_code == 503 and "qdrant down" in r.json()["error"]
+
+
+def test_ingest_then_query_returns_audited_answer_with_coordinates(client):
+    r = ingest(client, text=POLICY)
+    assert r.status_code == 200
+    [doc] = r.json()["documents"]
+    assert doc["doc_id"] == "policy.md" and doc["kind"] == "markdown" and doc["parents"] >= 1 and doc["children"] >= 1
+
+    r = client.post("/query", json={"question": "¿Cuánto tiempo se conservan los registros de auditoría?"}, headers=H)
+    assert r.status_code == 200
+    j = r.json()
+    assert j["status"] == "verified" and j["confidence"] >= 0.95
+    ev = j["claims"][0]["evidence"]
+    assert ev["doc_id"] == "policy.md" and POLICY[ev["start"] : ev["end"]] == ev["text"] and "7 años" in ev["text"]
+    src = j["sources"][0]
+    assert src["doc_id"] == "policy.md" and src["start"] <= ev["start"] and ev["end"] <= src["end"]
+    assert src["section"] == "Retención de datos"
+
+
+def test_query_with_unverifiable_answer_returns_deterministic_fallback(client):
+    ingest(client, text=POLICY)
+    j = client.post("/query", json={"question": "¿Quién ganó el mundial de 1998?"}, headers=H).json()
+    assert j["status"] == "fallback"
+    assert j["answer"] == "No se puede verificar la respuesta con un 95% de certidumbre basada en las fuentes proporcionadas"
+
+
+def test_ingest_pdf_base64_reports_pages(client):
+    pdf = make_pdf(["Page one is about apples.", "The warranty period is 24 months."])
+    r = ingest(client, doc_id="w.pdf", content_base64=base64.b64encode(pdf).decode())
+    assert r.status_code == 200 and r.json()["documents"][0]["kind"] == "pdf"
+    j = client.post("/query", json={"question": "What is the warranty period?"}, headers=H).json()
+    assert j["status"] == "verified"
+    assert j["sources"][0]["page"] == 1  # the parent chunk starts on page 1 ...
+    assert j["claims"][0]["evidence"]["page"] == 2  # ... but the supporting sentence is on page 2
+
+
+def test_ingest_code_file_and_multiple_documents(client):
+    r = client.post("/ingest", json={"documents": [
+        {"doc_id": "a.py", "text": "def limit():\n    # El límite de reintentos es 5.\n    return 5\n"},
+        {"doc_id": "b.txt", "text": "Notas varias."},
+    ]}, headers=H)
+    assert [d["kind"] for d in r.json()["documents"]] == ["code", "text"]
+
+
+def test_reingesting_a_document_replaces_it(client):
+    ingest(client, text="Los registros se conservan durante 7 años.")
+    ingest(client, text="Los registros se conservan durante 9 años.")
+    j = client.post("/query", json={"question": "¿cuánto se conservan los registros?"}, headers=H).json()
+    assert "9 años" in j["answer"] and "7 años" not in j["answer"]
+
+
+@pytest.mark.parametrize("payload", [
+    {"documents": []},
+    {"documents": [{"doc_id": "x"}]},  # neither text nor content
+    {"documents": [{"doc_id": "x", "text": "a", "content_base64": "YQ=="}]},  # both
+    {"documents": [{"doc_id": "x", "content_base64": "%%%not-base64%%%"}]},
+    {"documents": [{"doc_id": "x.pdf", "content_base64": base64.b64encode(b"not a pdf").decode()}]},
+    {"documents": [{"doc_id": "", "text": "a"}]},
+    {"documents": [{"doc_id": "x", "text": "a", "kind": "video"}]},
+    {},
+])
+def test_ingest_validation_errors(client, payload):
+    assert client.post("/ingest", json=payload, headers=H).status_code == 422
+
+
+def test_tenant_header_is_required_and_isolates_data(client):
+    ingest(client, text=POLICY)
+    assert client.post("/query", json={"question": "x"}).status_code == 400
+    assert client.post("/ingest", json={"documents": [{"doc_id": "a", "text": "b"}]}, headers={"X-Tenant": "  "}).status_code == 400
+    j = client.post("/query", json={"question": "registros de auditoría"}, headers={"X-Tenant": "rival"}).json()
+    assert j["status"] == "fallback" and j["sources"] == []
+
+
+def test_acl_groups_via_api(client):
+    ingest(client, doc_id="s.txt", text="El código secreto es ORIÓN.", acl=["legal"])
+    q = {"question": "¿Cuál es el código secreto?"}
+    assert client.post("/query", json=q, headers=H).json()["status"] == "fallback"
+    assert client.post("/query", json={**q, "groups": ["legal"]}, headers=H).json()["status"] == "verified"
+
+
+def test_query_validation(client):
+    for body in ({}, {"question": ""}, {"question": "x", "top_k": 0}, {"question": "x", "top_k": 99}):
+        assert client.post("/query", json=body, headers=H).status_code == 422
+
+
+def test_repeated_query_is_served_from_cache(client):
+    ingest(client, text=POLICY)
+    body = {"question": "¿Cuánto tiempo se conservan los registros de auditoría?"}
+    assert client.post("/query", json=body, headers=H).json()["cached"] is False
+    assert client.post("/query", json=body, headers=H).json()["cached"] is True
+
+
+def test_audit_endpoint_lists_queries_per_tenant(client):
+    ingest(client, text=POLICY)
+    client.post("/query", json={"question": "¿Cómo se cifran los datos en reposo?"}, headers={**H, "X-User": "ana"})
+    rows = client.get("/audit", headers=H).json()
+    assert rows[0]["user"] == "ana" and rows[0]["status"] == "verified"
+    assert client.get("/audit", headers={"X-Tenant": "rival"}).json() == []
+
+
+def test_api_key_enforced_when_configured(client, monkeypatch):
+    monkeypatch.setenv("CONTEXTRAG_API_KEY", "s3cret")
+    body = {"documents": [{"doc_id": "a", "text": "b"}]}
+    assert client.post("/ingest", json=body, headers=H).status_code == 401
+    assert client.post("/ingest", json=body, headers={**H, "X-API-Key": "wrong"}).status_code == 401
+    assert client.post("/ingest", json=body, headers={**H, "X-API-Key": "s3cret"}).status_code == 200
+    assert client.get("/healthz").status_code == 200  # probes stay open

@@ -34,12 +34,11 @@ class HashingEmbedder:
 class SentenceTransformerEmbedder:
     """bge-large-en / bge-large-es / bge-m3 etc. via sentence-transformers."""
 
-    def __init__(self, model: str = "BAAI/bge-large-en-v1.5", query_prefix: str = ""):
+    def __init__(self, model: str = "BAAI/bge-large-en-v1.5"):
         from sentence_transformers import SentenceTransformer
 
         self._m = SentenceTransformer(model)
         self.dim = self._m.get_sentence_embedding_dimension()
-        self.query_prefix = query_prefix
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]:
         return self._m.encode(list(texts), normalize_embeddings=True).tolist()

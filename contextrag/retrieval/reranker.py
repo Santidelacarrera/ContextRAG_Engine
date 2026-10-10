@@ -2,16 +2,20 @@ from __future__ import annotations
 
 from typing import Protocol, Sequence
 
-from .models import ChildChunk
-from .text import content_tokens, stem
+from ..core.text import content_tokens, stem
 
 
 class Reranker(Protocol):
+    """Optional attribute ``min_score``: parents scoring <= it are discarded (cross-encoder
+    logits are unbounded, so none is applied unless the reranker declares one)."""
+
     def score(self, query: str, passages: Sequence[str]) -> list[float]: ...
 
 
 class LexicalReranker:
     """Offline stand-in: fraction of query terms covered by the passage."""
+
+    min_score = 0.0  # passages with no query-term overlap are dropped (score must be > min_score)
 
     def score(self, query, passages):
         q = {stem(t) for t in content_tokens(query)}
@@ -42,10 +46,3 @@ class CohereReranker:
         for item in r.results:
             out[item.index] = item.relevance_score
         return out
-
-
-def rerank(reranker: Reranker, query: str, chunks: Sequence[ChildChunk], top_n: int) -> list[tuple[ChildChunk, float]]:
-    if not chunks:
-        return []
-    scores = reranker.score(query, [c.text for c in chunks])
-    return sorted(zip(chunks, scores), key=lambda x: -x[1])[:top_n]
