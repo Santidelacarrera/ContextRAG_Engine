@@ -137,10 +137,86 @@ def test_threshold_is_inclusive_and_configurable():
     assert NLIVerifier(Fixed(0.8), 0.7).verify("x y. [1]", [c])[0].supported
 
 
-def test_multi_sentence_evidence_window():
+def test_multi_sentence_evidence_window_with_a_semantic_model():
+    class TwoSentences:  # stand-in for a semantic NLI that accepts a claim only when both sentences are read together
+        def entailment(self, pairs):
+            return [0.99 if p.count(".") >= 2 else 0.2 for p, _ in pairs]
+
+    c = ctx("El sistema usa Postgres. Guarda los logs de auditoría ahí.")
+    [v] = NLIVerifier(TwoSentences()).verify("El sistema usa Postgres y guarda los logs de auditoría. [1]", [c])
+    assert v.supported and v.evidence.text.count(".") == 2
+
+
+def test_lexical_nli_never_stitches_facts_from_different_sentences_or_clauses():
     c = ctx("El sistema usa Postgres. Guarda los logs de auditoría ahí.")
     [v] = NLIVerifier().verify("El sistema usa Postgres y guarda los logs de auditoría. [1]", [c])
-    assert v.supported and v.evidence.text.count(".") == 2
+    assert not v.supported  # fail closed: a heuristic cannot know the subject carries over
+    for premise, claim in [("The CEO is Ana. The office is in Madrid.", "The CEO is in Madrid."),
+                           ("Alice has 3 cats and Bob has 5 cats.", "Alice has 5 cats."),
+                           ("Ana hired Luis. He earns 5000 euros.", "Ana earns 5000 euros.")]:
+        assert verify_attribution(claim, [premise]) < 0.95
+    # ... while the claim that really is one clause of the premise passes, and conjunctions it repeats are fine
+    assert verify_attribution("Bob has 5 cats.", ["Alice has 3 cats and Bob has 5 cats."]) == 1.0
+    assert verify_attribution("Alice has 3 cats and Bob has 5 cats.", ["Alice has 3 cats and Bob has 5 cats."]) == 1.0
+
+
+@pytest.mark.parametrize("premise,claim", [
+    ("Employees may work remotely.", "Employees work remotely."),
+    ("Refunds are issued unless the item was used.", "Refunds are issued."),
+    ("In some cases the server restarts.", "The server restarts."),
+    ("Admins can delete only drafts.", "Admins can delete drafts."),
+    ("None of the users are admins.", "Users are admins."),
+    ("The system doesn't support TLS 1.0.", "The system supports TLS 1.0."),
+    ("You can't delete the account.", "You can delete the account."),
+    ("The patch won't fix the bug.", "The patch fix the bug."),
+    ("It is not true that the test failed.", "The test failed."),
+    ("If the user is admin, access is granted.", "Access is granted."),
+    ("Critics claim the drug works.", "The drug works."),
+    ("The statement that the drug works is false.", "The drug works."),
+    ("It is unclear whether the drug works.", "The drug works."),
+    ("Requires at least 3 approvals.", "Requires 3 approvals."),
+    ("All staff except interns get a bonus.", "Interns get a bonus."),
+    ("Temperature was -5 degrees.", "Temperature was 5 degrees."),
+    ("Release 2.1.1 fixed it.", "Release 2.1 fixed it."),
+    ("Ningún empleado aprobó la propuesta.", "Un empleado aprobó la propuesta."),
+    ("Se reembolsa salvo que esté usado.", "Se reembolsa."),
+    ("Hay más de 5 usuarios.", "Hay 5 usuarios."),
+    ("Paris is not the capital of Spain.", "Paris."),
+])
+def test_lexical_nli_rejects_meaning_changing_omissions(premise, claim):
+    assert verify_attribution(claim, [premise]) < 0.95
+
+
+@pytest.mark.parametrize("premise,claim", [
+    ("The limit is 7.", "The limit is 7.0."),
+    ("The limit is 7.5 units.", "The limit is 7,5 units."),
+    ("Cost is 1,500 dollars.", "Cost is 1500 dollars."),
+    ("Growth was 15%.", "Growth was 15 percent."),
+    ("Die Straße ist lang.", "Die Strasse ist lang."),
+    ("Passwords expire after 90 days and cannot be reused.", "Passwords expire after 90 days."),
+    ("You cannot delete the account.", "You cannot delete the account."),
+    ("The product is not toxic, but it is expensive.", "The product is not toxic."),
+    ("It's stable.", "It is stable."),
+])
+def test_lexical_nli_accepts_faithful_reformulations(premise, claim):
+    assert verify_attribution(claim, [premise]) >= 0.95
+
+
+def test_one_wrong_word_in_a_long_claim_is_not_forgiven():
+    premise = ("The committee reviewed the budget for the northern region during the spring session and approved "
+               "the proposal after a long discussion with all members present")
+    assert verify_attribution(premise, [premise]) == 1.0
+    assert verify_attribution(premise.replace("northern", "southern"), [premise]) < 0.95
+
+
+def test_lexical_nli_is_linear_time_on_huge_inputs():
+    import time
+
+    big = ("word%d " * 5000) % tuple(range(5000))
+    t = time.perf_counter()
+    assert verify_attribution(big.strip() + ".", [big.strip() + "."]) == 1.0
+    assert verify_attribution("zzz " * 2000, [big]) < 0.95
+    assert time.perf_counter() - t < 2.0
 
 
 def test_deberta_wrapper_is_importable_and_requires_extras():

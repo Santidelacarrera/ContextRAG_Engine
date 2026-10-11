@@ -142,7 +142,8 @@ class ContextRAG:
             return verdicts
         for v, s in zip(checked, self.reranker.score(question, [v.evidence.text for v in checked]), strict=True):
             if s <= floor:
-                v.supported, v.evidence, v.reason = False, None, "evidence not relevant to the question"
+                v.supported, v.evidence, v.score = False, None, 0.0
+                v.reason = "evidence not relevant to the question"
         return verdicts
 
     def _fallback(self, question, contexts, verdicts, attempts, reason, confidence=0.0) -> Answer:

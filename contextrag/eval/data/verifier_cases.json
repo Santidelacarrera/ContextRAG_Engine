@@ -1,42 +1,394 @@
 [
-  {"id": "ok-verbatim-es", "label": "supported", "category": "verbatim",
-   "premise": "Los registros de auditoría se conservan durante 7 años.", "claim": "Los registros de auditoría se conservan durante 7 años."},
-  {"id": "ok-subset-es", "label": "supported", "category": "subset",
-   "premise": "Los registros de auditoría se conservan durante 7 años.", "claim": "Los registros se conservan durante 7 años."},
-  {"id": "ok-subset-en", "label": "supported", "category": "subset",
-   "premise": "The warranty period is 24 months and covers parts and labor.", "claim": "The warranty period is 24 months."},
-  {"id": "ok-keys-es", "label": "supported", "category": "verbatim",
-   "premise": "Todos los datos en reposo se cifran con AES-256. Las claves se rotan cada 12 meses.", "claim": "Las claves se rotan cada 12 meses."},
-  {"id": "ok-pw-en", "label": "supported", "category": "verbatim",
-   "premise": "Passwords expire after 90 days and cannot be reused.", "claim": "Passwords expire after 90 days."},
-  {"id": "bad-swap-es", "label": "unsupported", "category": "role_swap",
-   "premise": "Ana aprobó a Luis.", "claim": "Luis aprobó a Ana."},
-  {"id": "bad-swap-en", "label": "unsupported", "category": "role_swap",
-   "premise": "The vendor sues the client.", "claim": "The client sues the vendor."},
-  {"id": "bad-number", "label": "unsupported", "category": "number",
-   "premise": "Los registros de auditoría se conservan durante 7 años.", "claim": "Los registros de auditoría se conservan durante 10 años."},
-  {"id": "bad-number-prefix", "label": "unsupported", "category": "number",
-   "premise": "Los registros de auditoría se conservan durante 7 años.", "claim": "Los registros de auditoría se conservan durante 70 años."},
-  {"id": "bad-negation", "label": "unsupported", "category": "negation",
-   "premise": "Los registros de auditoría se conservan durante 7 años.", "claim": "Los registros de auditoría no se conservan durante 7 años."},
-  {"id": "bad-unit", "label": "unsupported", "category": "unit",
-   "premise": "Los registros de auditoría se conservan durante 7 años.", "claim": "Los registros de auditoría se conservan durante 7 meses."},
-  {"id": "bad-antonym", "label": "unsupported", "category": "antonym",
-   "premise": "Los registros de acceso se eliminan a los 90 días.", "claim": "Los registros de acceso se conservan a los 90 días."},
-  {"id": "bad-extra-fact", "label": "unsupported", "category": "extra_claim",
-   "premise": "Los registros de auditoría se conservan durante 7 años.", "claim": "Los registros de auditoría se conservan durante 7 años y están cifrados con AES-512."},
-  {"id": "bad-entity", "label": "unsupported", "category": "entity",
-   "premise": "El contrato fue firmado por Globex.", "claim": "El contrato fue firmado por Acme."},
-  {"id": "bad-scope", "label": "unsupported", "category": "scope",
-   "premise": "Los administradores pueden borrar registros.", "claim": "Todos los usuarios pueden borrar registros."},
-  {"id": "bad-modal", "label": "unsupported", "category": "modality",
-   "premise": "El sistema puede cifrar datos.", "claim": "El sistema debe cifrar datos."},
-  {"id": "bad-temporal", "label": "unsupported", "category": "entity",
-   "premise": "La reunión es el lunes.", "claim": "La reunión es el martes."},
-  {"id": "bad-hedge", "label": "unsupported", "category": "hedge_removal",
-   "premise": "Podría haber fallos en la red.", "claim": "Hay fallos en la red."},
-  {"id": "bad-unrelated", "label": "unsupported", "category": "unrelated",
-   "premise": "Los registros de auditoría se conservan durante 7 años.", "claim": "La capital de Francia es París."},
-  {"id": "bad-partial-en", "label": "unsupported", "category": "extra_claim",
-   "premise": "The default API timeout is 30 seconds.", "claim": "The default API timeout is 30 seconds and retries are unlimited."}
+ {
+  "id": "ok-verbatim-es",
+  "label": "supported",
+  "category": "verbatim",
+  "premise": "Los registros de auditoría se conservan durante 7 años.",
+  "claim": "Los registros de auditoría se conservan durante 7 años."
+ },
+ {
+  "id": "ok-subset-es",
+  "label": "supported",
+  "category": "subset",
+  "premise": "Los registros de auditoría se conservan durante 7 años.",
+  "claim": "Los registros se conservan durante 7 años."
+ },
+ {
+  "id": "ok-subset-en",
+  "label": "supported",
+  "category": "subset",
+  "premise": "The warranty period is 24 months and covers parts and labor.",
+  "claim": "The warranty period is 24 months."
+ },
+ {
+  "id": "ok-keys-es",
+  "label": "supported",
+  "category": "verbatim",
+  "premise": "Todos los datos en reposo se cifran con AES-256. Las claves se rotan cada 12 meses.",
+  "claim": "Las claves se rotan cada 12 meses."
+ },
+ {
+  "id": "ok-pw-en",
+  "label": "supported",
+  "category": "verbatim",
+  "premise": "Passwords expire after 90 days and cannot be reused.",
+  "claim": "Passwords expire after 90 days."
+ },
+ {
+  "id": "bad-swap-es",
+  "label": "unsupported",
+  "category": "role_swap",
+  "premise": "Ana aprobó a Luis.",
+  "claim": "Luis aprobó a Ana."
+ },
+ {
+  "id": "bad-swap-en",
+  "label": "unsupported",
+  "category": "role_swap",
+  "premise": "The vendor sues the client.",
+  "claim": "The client sues the vendor."
+ },
+ {
+  "id": "bad-number",
+  "label": "unsupported",
+  "category": "number",
+  "premise": "Los registros de auditoría se conservan durante 7 años.",
+  "claim": "Los registros de auditoría se conservan durante 10 años."
+ },
+ {
+  "id": "bad-number-prefix",
+  "label": "unsupported",
+  "category": "number",
+  "premise": "Los registros de auditoría se conservan durante 7 años.",
+  "claim": "Los registros de auditoría se conservan durante 70 años."
+ },
+ {
+  "id": "bad-negation",
+  "label": "unsupported",
+  "category": "negation",
+  "premise": "Los registros de auditoría se conservan durante 7 años.",
+  "claim": "Los registros de auditoría no se conservan durante 7 años."
+ },
+ {
+  "id": "bad-unit",
+  "label": "unsupported",
+  "category": "unit",
+  "premise": "Los registros de auditoría se conservan durante 7 años.",
+  "claim": "Los registros de auditoría se conservan durante 7 meses."
+ },
+ {
+  "id": "bad-antonym",
+  "label": "unsupported",
+  "category": "antonym",
+  "premise": "Los registros de acceso se eliminan a los 90 días.",
+  "claim": "Los registros de acceso se conservan a los 90 días."
+ },
+ {
+  "id": "bad-extra-fact",
+  "label": "unsupported",
+  "category": "extra_claim",
+  "premise": "Los registros de auditoría se conservan durante 7 años.",
+  "claim": "Los registros de auditoría se conservan durante 7 años y están cifrados con AES-512."
+ },
+ {
+  "id": "bad-entity",
+  "label": "unsupported",
+  "category": "entity",
+  "premise": "El contrato fue firmado por Globex.",
+  "claim": "El contrato fue firmado por Acme."
+ },
+ {
+  "id": "bad-scope",
+  "label": "unsupported",
+  "category": "scope",
+  "premise": "Los administradores pueden borrar registros.",
+  "claim": "Todos los usuarios pueden borrar registros."
+ },
+ {
+  "id": "bad-modal",
+  "label": "unsupported",
+  "category": "modality",
+  "premise": "El sistema puede cifrar datos.",
+  "claim": "El sistema debe cifrar datos."
+ },
+ {
+  "id": "bad-temporal",
+  "label": "unsupported",
+  "category": "entity",
+  "premise": "La reunión es el lunes.",
+  "claim": "La reunión es el martes."
+ },
+ {
+  "id": "bad-hedge",
+  "label": "unsupported",
+  "category": "hedge_removal",
+  "premise": "Podría haber fallos en la red.",
+  "claim": "Hay fallos en la red."
+ },
+ {
+  "id": "bad-unrelated",
+  "label": "unsupported",
+  "category": "unrelated",
+  "premise": "Los registros de auditoría se conservan durante 7 años.",
+  "claim": "La capital de Francia es París."
+ },
+ {
+  "id": "bad-partial-en",
+  "label": "unsupported",
+  "category": "extra_claim",
+  "premise": "The default API timeout is 30 seconds.",
+  "claim": "The default API timeout is 30 seconds and retries are unlimited."
+ },
+ {
+  "id": "bad-may",
+  "label": "unsupported",
+  "category": "hedge_removal",
+  "premise": "Employees may work remotely.",
+  "claim": "Employees work remotely."
+ },
+ {
+  "id": "bad-unless",
+  "label": "unsupported",
+  "category": "condition",
+  "premise": "Refunds are issued unless the item was used.",
+  "claim": "Refunds are issued."
+ },
+ {
+  "id": "bad-if",
+  "label": "unsupported",
+  "category": "condition",
+  "premise": "If the user is admin, access is granted.",
+  "claim": "Access is granted."
+ },
+ {
+  "id": "bad-if-es",
+  "label": "unsupported",
+  "category": "condition",
+  "premise": "Se reembolsa salvo que esté usado.",
+  "claim": "Se reembolsa."
+ },
+ {
+  "id": "bad-some",
+  "label": "unsupported",
+  "category": "quantifier",
+  "premise": "Some users are admins.",
+  "claim": "Users are admins."
+ },
+ {
+  "id": "bad-none",
+  "label": "unsupported",
+  "category": "quantifier",
+  "premise": "None of the users are admins.",
+  "claim": "Users are admins."
+ },
+ {
+  "id": "bad-none-es",
+  "label": "unsupported",
+  "category": "quantifier",
+  "premise": "Ningún empleado aprobó la propuesta.",
+  "claim": "Un empleado aprobó la propuesta."
+ },
+ {
+  "id": "bad-only",
+  "label": "unsupported",
+  "category": "quantifier",
+  "premise": "Admins can delete only drafts.",
+  "claim": "Admins can delete drafts."
+ },
+ {
+  "id": "bad-except",
+  "label": "unsupported",
+  "category": "quantifier",
+  "premise": "All staff except interns get a bonus.",
+  "claim": "Interns get a bonus."
+ },
+ {
+  "id": "bad-atleast",
+  "label": "unsupported",
+  "category": "quantifier",
+  "premise": "Requires at least 3 approvals.",
+  "claim": "Requires 3 approvals."
+ },
+ {
+  "id": "bad-morethan-es",
+  "label": "unsupported",
+  "category": "quantifier",
+  "premise": "Hay más de 5 usuarios.",
+  "claim": "Hay 5 usuarios."
+ },
+ {
+  "id": "bad-contraction",
+  "label": "unsupported",
+  "category": "negation",
+  "premise": "The system doesn't support TLS 1.0.",
+  "claim": "The system supports TLS 1.0."
+ },
+ {
+  "id": "bad-cant",
+  "label": "unsupported",
+  "category": "negation",
+  "premise": "You can't delete the account.",
+  "claim": "You can delete the account."
+ },
+ {
+  "id": "bad-wont",
+  "label": "unsupported",
+  "category": "negation",
+  "premise": "The patch won't fix the bug.",
+  "claim": "The patch fix the bug."
+ },
+ {
+  "id": "bad-notture",
+  "label": "unsupported",
+  "category": "negation",
+  "premise": "It is not true that the test failed.",
+  "claim": "The test failed."
+ },
+ {
+  "id": "bad-claims",
+  "label": "unsupported",
+  "category": "attribution",
+  "premise": "Critics claim the drug works.",
+  "claim": "The drug works."
+ },
+ {
+  "id": "bad-false",
+  "label": "unsupported",
+  "category": "attribution",
+  "premise": "The statement that the drug works is false.",
+  "claim": "The drug works."
+ },
+ {
+  "id": "bad-unclear",
+  "label": "unsupported",
+  "category": "attribution",
+  "premise": "It is unclear whether the drug works.",
+  "claim": "The drug works."
+ },
+ {
+  "id": "bad-said",
+  "label": "unsupported",
+  "category": "attribution",
+  "premise": "He said the drug is safe, but this is wrong.",
+  "claim": "The drug is safe."
+ },
+ {
+  "id": "bad-stitch-sent",
+  "label": "unsupported",
+  "category": "stitching",
+  "premise": "The CEO is Ana. The office is in Madrid.",
+  "claim": "The CEO is in Madrid."
+ },
+ {
+  "id": "bad-stitch-pron",
+  "label": "unsupported",
+  "category": "stitching",
+  "premise": "Ana hired Luis. He earns 5000 euros.",
+  "claim": "Ana earns 5000 euros."
+ },
+ {
+  "id": "bad-reassign",
+  "label": "unsupported",
+  "category": "stitching",
+  "premise": "Alice has 3 cats and Bob has 5 cats.",
+  "claim": "Alice has 5 cats."
+ },
+ {
+  "id": "bad-reassign-es",
+  "label": "unsupported",
+  "category": "stitching",
+  "premise": "Ana gana 3000 euros y Luis gana 5000 euros.",
+  "claim": "Ana gana 5000 euros."
+ },
+ {
+  "id": "bad-sign",
+  "label": "unsupported",
+  "category": "number",
+  "premise": "Temperature was -5 degrees.",
+  "claim": "Temperature was 5 degrees."
+ },
+ {
+  "id": "bad-version",
+  "label": "unsupported",
+  "category": "number",
+  "premise": "Release 2.1.1 fixed it.",
+  "claim": "Release 2.1 fixed it."
+ },
+ {
+  "id": "bad-oneword",
+  "label": "unsupported",
+  "category": "short_claim",
+  "premise": "Paris is not the capital of Spain.",
+  "claim": "Paris."
+ },
+ {
+  "id": "bad-long-one-wrong",
+  "label": "unsupported",
+  "category": "long_claim",
+  "premise": "The committee reviewed the budget for the northern region during the spring session and approved the proposal after a long discussion with all members present",
+  "claim": "The committee reviewed the budget for the southern region during the spring session and approved the proposal after a long discussion with all members present"
+ },
+ {
+  "id": "bad-deny",
+  "label": "unsupported",
+  "category": "antonym",
+  "premise": "Management refused to sign the contract.",
+  "claim": "Management sign the contract."
+ },
+ {
+  "id": "ok-number-fmt",
+  "label": "supported",
+  "category": "number_format",
+  "premise": "The limit is 7.5 units.",
+  "claim": "The limit is 7,5 units."
+ },
+ {
+  "id": "ok-thousands",
+  "label": "supported",
+  "category": "number_format",
+  "premise": "Cost is 1,500 dollars.",
+  "claim": "Cost is 1500 dollars."
+ },
+ {
+  "id": "ok-percent",
+  "label": "supported",
+  "category": "number_format",
+  "premise": "Growth was 15%.",
+  "claim": "Growth was 15 percent."
+ },
+ {
+  "id": "ok-far-negation",
+  "label": "supported",
+  "category": "scope",
+  "premise": "Passwords expire after 90 days and cannot be reused.",
+  "claim": "Passwords expire after 90 days."
+ },
+ {
+  "id": "ok-hedge-kept",
+  "label": "supported",
+  "category": "hedge_kept",
+  "premise": "Employees may work remotely.",
+  "claim": "Employees may work remotely."
+ },
+ {
+  "id": "ok-condition-kept",
+  "label": "supported",
+  "category": "condition_kept",
+  "premise": "Refunds are issued unless the item was used.",
+  "claim": "Refunds are issued unless the item was used."
+ },
+ {
+  "id": "ok-contraction",
+  "label": "supported",
+  "category": "negation_kept",
+  "premise": "The system doesn't support TLS 1.0.",
+  "claim": "The system does not support TLS 1.0."
+ },
+ {
+  "id": "ok-one-clause",
+  "label": "supported",
+  "category": "clause",
+  "premise": "Alice has 3 cats and Bob has 5 cats.",
+  "claim": "Bob has 5 cats."
+ }
 ]

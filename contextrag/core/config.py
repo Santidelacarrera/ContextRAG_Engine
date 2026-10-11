@@ -23,6 +23,16 @@ class Settings:
     # caching
     cache_ttl_seconds: int = 3600
 
+    def __post_init__(self):
+        # The decision gate: a threshold of 0 (or NaN, or >1) would silently disable -- or make unreachable -- the
+        # verification the whole product rests on, so refuse it instead of "working".
+        if not (0.0 < self.verification_threshold <= 1.0):
+            raise ValueError(f"verification_threshold must be in (0, 1], got {self.verification_threshold!r}")
+        if self.max_attempts < 1:
+            raise ValueError("max_attempts must be >= 1")
+        if self.child_tokens > self.parent_tokens or self.child_overlap_tokens >= self.child_tokens:
+            raise ValueError("require child_overlap_tokens < child_tokens <= parent_tokens")
+
     @classmethod
     def from_env(cls, prefix: str = "CONTEXTRAG_") -> "Settings":
         out = {}

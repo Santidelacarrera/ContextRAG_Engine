@@ -80,7 +80,7 @@ def parse_text(text: str) -> list[Segment]:
 
 
 def parse_markdown(text: str) -> list[Segment]:
-    """Split on blank lines, but keep fenced code blocks whole and track the heading path."""
+    """Split on blank lines, but keep fenced code blocks whole and track the heading path. Skips YAML frontmatter."""
     segs: list[Segment] = []
     path: list[tuple[int, str]] = []
     in_fence = False
@@ -88,13 +88,24 @@ def parse_markdown(text: str) -> list[Segment]:
     seg_section = ""
     last_end = 0
 
+    # Skip YAML frontmatter (--- at start and end)
+    lines_iter = list(_lines(text))
+    start_idx = 0
+    if lines_iter and lines_iter[0][1].rstrip("\r\n") == "---":
+        for i in range(1, len(lines_iter)):
+            if lines_iter[i][1].rstrip("\r\n") == "---":
+                start_idx = i + 1
+                break
+
     def flush(end: int):
         nonlocal seg_start
         if seg_start is not None and text[seg_start:end].strip():
             segs.append(Segment(seg_start, end, seg_section))
         seg_start = None
 
-    for pos, line in _lines(text):
+    for idx, (pos, line) in enumerate(lines_iter):
+        if idx < start_idx:
+            continue
         stripped = line.rstrip("\r\n")
         if _FENCE.match(stripped):
             in_fence = not in_fence
@@ -189,16 +200,30 @@ def chunk_document(
 
     # greedy packing of consecutive segments into parents
     packed: list[tuple[int, int, str]] = []
-    cur: tuple[int, int, str] | None = None
+    cur: tuple[tuple[int, int], str] | None = None  # ((i, j), section)
+
     for i, j, section in ranges:
-        if cur and j - cur[0] <= cfg.parent_tokens:
-            cur = (cur[0], j, cur[2])
-        else:
-            if cur:
+        if cur:
+            i_start, j_end = cur[0]
+            if j - i_start <= cfg.parent_tokens:
+                # Keep deepest section: use new section if it has more nesting
+                cur_section = cur[1]
+                if section.count(" > ") > cur_section.count(" > "):
+                    cur = ((i_start, j), section)
+                else:
+                    cur = ((i_start, j), cur_section)
+            else:
                 packed.append(cur)
-            cur = (i, j, section)
+                cur = ((i, j), section)
+        else:
+            cur = ((i, j), section)
+
     if cur:
         packed.append(cur)
+
+    # Reformat packed list for compatibility with rest of code
+    packed_formatted: list[tuple[int, int, str]] = [(i, j, section) for (i, j), section in packed]
+    packed = packed_formatted
 
     parents: list[ParentChunk] = []
     children: list[ChildChunk] = []

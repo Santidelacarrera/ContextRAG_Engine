@@ -12,6 +12,21 @@ STOPWORDS = frozenset(
 )
 
 
+ABBREVIATIONS = frozenset("""dr dra sr sra srta mr mrs ms prof profa ing lic ud uds vs etc approx aprox inc ltd corp co fig figs sec
+art arts núm num pág pp cap caps ej eg ie cf al jr st e.g i.e u.s ee.uu a.m p.m p vol""".split())
+
+
+def is_abbreviation(word: str) -> bool:
+    """True for tokens whose trailing period does not end a sentence ("Dr.", "e.g.", "etc.", "Inc.")."""
+    w = word.lower().rstrip(".")
+    return w in ABBREVIATIONS
+
+
+def _ends_with_abbreviation(segment: str) -> bool:
+    m = re.search(r"([\w.]+)\.$", segment.rstrip())
+    return bool(m) and is_abbreviation(m.group(1))
+
+
 def tokenize(text: str) -> list[str]:
     return [t.lower() for t in _TOKEN.findall(text)]
 
@@ -35,6 +50,8 @@ def split_sentences(text: str, base: int = 0) -> list[tuple[str, int, int]]:
     out: list[tuple[str, int, int]] = []
     pos = 0
     for m in list(_SENT_END.finditer(text)) + [None]:
+        if m and "\n" not in m.group() and _ends_with_abbreviation(text[pos : m.start()]):
+            continue  # "Dr. Smith", "e.g. this": the period does not end the sentence
         end = m.start() if m else len(text)
         seg = text[pos:end]
         stripped = seg.strip()

@@ -12,10 +12,12 @@ Two entry points:
 from __future__ import annotations
 
 import re
+import unicodedata
+from functools import lru_cache
 from typing import Protocol, Sequence
 
 from ..core.models import ClaimVerdict, Context, Evidence
-from ..core.text import content_tokens, split_sentences, stem
+from ..core.text import STOPWORDS, _ends_with_abbreviation, content_tokens, is_abbreviation, split_sentences, stem
 
 DEFAULT_THRESHOLD = 0.95
 MAX_WINDOW = 3  # evidence windows span 1..3 consecutive sentences
@@ -35,40 +37,149 @@ class NLIModel(Protocol):
         ...
 
 
-_NEG = {"no", "not", "never", "none", "without", "cannot", "nunca", "sin", "tampoco", "nadie", "ningún", "ninguno"}
-_NUM = re.compile(r"\d+(?:[.,]\d+)?")
+# ---- heuristic NLI -------------------------------------------------------------------------
+#
+# Terms whose omission changes meaning. If one is present in the premise clause a claim is aligned to and
+# the claim does not carry it too, the claim is NOT entailed ("Employees may work remotely" !=> "Employees work remotely").
+_NEG_WORDS = """no not never none nobody nothing neither nor without unable lack lacks lacking absent absence cannot
+nunca jamás ningún ninguno ninguna nadie nada tampoco ni sin""".split()
+_QUALIFIER_WORDS = """may might could can should must shall required possible possibly perhaps maybe probably likely
+unlikely allegedly reportedly supposedly apparently claim claims claimed said says say stated according believed
+alleged unclear unknown uncertain doubtful doubt false untrue incorrect wrong deny denies denied refuse refuses refused
+reject rejects rejected prohibited forbidden banned fail fails failed only just merely solely some several few most
+mostly partially partly sometimes occasionally usually often generally typically rarely seldom hardly barely except
+excluding excluded besides least fewer less more than approximately nearly almost
+puede pueden podría podrían podrá debe deben debería quizá quizás posible posiblemente probablemente supuestamente
+presuntamente afirma afirman dijo dice según falso falsa incorrecto niega negó rechaza rechazó prohibido prohibida
+solo sólo solamente algunos algunas varios varias pocos pocas mayoría parcialmente generalmente raramente apenas
+excepto salvo menos más aproximadamente casi deja dejó dejar fracasa falla""".split()
+# Conditions govern the whole sentence, not just their own clause ("If admin, access is granted.").
+_CONDITION_WORDS = "if unless whether provided assuming until when whenever otherwise si cuando".split()
+_CLAUSE_WORDS = {"and", "but", "however", "while", "whereas", "although", "though", "or",
+                 "y", "e", "o", "u", "pero", "aunque", "mientras", "sino"}
+_UNCERTAINTY_SCORE = 0.9  # ceiling for "terms present but not admissibly aligned": must stay below any real threshold
+
+_TOKEN = re.compile(r"(?<!\w)-?\d+(?:[.,]\d+)*(?!\w)|\w+(?:[-.]\w+)*|[.!?]+(?=\s|$)|[,;:]|\n")
+_NUMBER = re.compile(r"-?\d[\d.,]*$")
+_SENT_END = re.compile(r"[.!?]+")
+_CONTRACTIONS = [(r"\bcan['’]t\b", "can not"), (r"\bcannot\b", "can not"), (r"\bwon['’]t\b", "will not"),
+                 (r"\bshan['’]t\b", "shall not"), (r"\bain['’]t\b", "is not"), (r"\b(\w+)n['’]t\b", r"\1 not"),
+                 (r"['’]s\b", "")]
 
 
-def _align(h: list[str], p: list[str]) -> list[int]:
-    """Indices into ``p`` of a longest common subsequence of ``h`` and ``p`` (DP with traceback)."""
-    n, m = len(h), len(p)
-    t = [[0] * (m + 1) for _ in range(n + 1)]
-    for i in range(n - 1, -1, -1):
-        for j in range(m - 1, -1, -1):
-            t[i][j] = t[i + 1][j + 1] + 1 if h[i] == p[j] else max(t[i + 1][j], t[i][j + 1])
-    i = j = 0
-    out = []
-    while i < n and j < m:
-        if h[i] == p[j]:
-            out.append(j)
-            i += 1
-            j += 1
-        elif t[i + 1][j] >= t[i][j + 1]:
-            i += 1
-        else:
-            j += 1
-    return out
+def _canon_number(tok: str) -> str:
+    """-7.50 -> -7.5, 05 -> 5, 1,500 / 1.500 -> 1500, 7,5 -> 7.5 (versions like 2.1.1 are left alone)."""
+    sign, body = ("-", tok[1:]) if tok.startswith("-") else ("", tok)
+    if re.fullmatch(r"\d{1,3}(?:[.,]\d{3})+", body):
+        body = re.sub(r"[.,]", "", body)
+    elif re.fullmatch(r"\d+,\d+", body):
+        body = body.replace(",", ".")
+    if re.fullmatch(r"\d+\.\d+", body):
+        body = body.rstrip("0").rstrip(".") if "." in body else body
+        whole, _, frac = body.partition(".")
+        body = (whole.lstrip("0") or "0") + ("." + frac if frac else "")
+    elif body.isdigit():
+        body = body.lstrip("0") or "0"
+    return sign + body
+
+
+class _Clause:
+    __slots__ = ("stems", "marks", "neg", "cond")
+
+    def __init__(self):
+        self.stems: list[str] = []
+        self.marks: set[str] = set()  # qualifiers + negations present (as stems)
+        self.neg: set[str] = set()
+        self.cond: set[str] = set()
+
+
+_NEG = {stem(w) for w in _NEG_WORDS}
+_QUAL = {stem(w) for w in _QUALIFIER_WORDS} | _NEG
+_COND = {stem(w) for w in _CONDITION_WORDS}
+
+
+class _Analysis:
+    def __init__(self, text: str):
+        t = unicodedata.normalize("NFKC", text).casefold().replace("%", " percent ")
+        for pat, rep in _CONTRACTIONS:
+            t = re.sub(pat, rep, t)
+        self.sentences: list[list[_Clause]] = []
+        self.numbers: set[str] = set()
+        self.neg: set[str] = set()
+        self.stems: set[str] = set()
+        self.cdelims = 0  # clause delimiters (commas, 'and', ...) -- a claim may only span as many clauses as it has
+        clauses: list[_Clause] = []
+        cur = _Clause()
+
+        def close_clause():
+            nonlocal cur
+            if cur.stems:
+                clauses.append(cur)
+            cur = _Clause()
+
+        prev = ""
+        for tok in _TOKEN.findall(t):
+            was_prev, prev = prev, tok
+            if _SENT_END.fullmatch(tok) and is_abbreviation(was_prev):
+                continue
+            if tok == "\n" or _SENT_END.fullmatch(tok):
+                close_clause()
+                if clauses:
+                    self.sentences.append(clauses)
+                    clauses = []
+                continue
+            if tok in ",;:" or tok in _CLAUSE_WORDS:
+                self.cdelims += 1
+                close_clause()
+                continue
+            if _NUMBER.match(tok):
+                tok = _canon_number(tok)
+                self.numbers.add(tok)
+                st = tok
+            else:
+                st = stem(tok) if not any(c.isdigit() for c in tok) else tok
+            is_marker = st in _QUAL
+            if tok in STOPWORDS and not is_marker and st not in _COND:
+                continue
+            cur.stems.append(st)
+            self.stems.add(st)
+            if st in _QUAL:
+                cur.marks.add(st)
+            if st in _NEG:
+                cur.neg.add(st)
+                self.neg.add(st)
+            if st in _COND:
+                cur.cond.add(st)
+        close_clause()
+        if clauses:
+            self.sentences.append(clauses)
+
+    @property
+    def flat(self) -> list[str]:
+        return [s for sent in self.sentences for c in sent for s in c.stems]
+
+
+@lru_cache(maxsize=8192)
+def _analyse(text: str) -> _Analysis:
+    return _Analysis(text)
+
+
+def _is_subsequence(needle: list[str], hay: list[str]) -> bool:
+    it = iter(hay)
+    return all(any(x == y for y in it) for x in needle)
 
 
 class LexicalEntailment:
-    """Conservative heuristic NLI usable offline.
+    """Conservative, dependency-free heuristic NLI (fails closed). A claim is entailed (score 1.0) only if ALL
+    of its content terms occur, in order, inside ONE sentence of the premise, spanning no more clauses
+    (separated by commas / 'and' / 'but' ...) than the claim itself does, AND that stretch carries no qualifier,
+    negation or condition the claim leaves out ("may", "unless", "only", "some", "doesn't", "if ...", "claims that").
+    It also rejects a number or negation the premise lacks, and stitching of facts from different sentences or
+    clauses. Anything else scores at most 0.9 (set-coverage based, so it can still be ranked), which is below
+    every sensible threshold.
 
-    Score = (longest in-order run of the hypothesis' content terms found in the premise) / (number of
-    hypothesis content terms). Being order-sensitive, "Luis aprobó a Ana" is NOT entailed by "Ana aprobó a
-    Luis". The score is 0 if the hypothesis introduces a number the premise lacks, or if negation differs
-    between the hypothesis and the stretch of the premise it aligns to (a negation in an unrelated clause
-    of the same sentence is ignored). It rejects honest paraphrase and re-ordering (fails closed) and cannot
-    detect every subtle contradiction; use ``DebertaNLI`` for semantic entailment in production.
+    It is a safety net for offline use and tests, not a semantic model: it rejects honest paraphrase and cannot
+    reason about meaning. Use ``DebertaNLI`` in production and calibrate with ``python -m contextrag eval --sweep``.
     """
 
     def entailment(self, pairs):
@@ -76,18 +187,32 @@ class LexicalEntailment:
 
     @staticmethod
     def _one(premise: str, hyp: str) -> float:
-        h = [stem(t) for t in content_tokens(hyp)]
+        H, P = _analyse(hyp), _analyse(premise)
+        h = H.flat
         if not h:
             return 0.0
-        p = [stem(t) for t in content_tokens(premise)]
-        if set(_NUM.findall(hyp)) - set(_NUM.findall(premise)):
+        if H.numbers - P.numbers:  # a number the premise does not contain
             return 0.0
-        idx = _align(h, p)
-        if not idx:
+        if H.neg and not (H.neg & P.neg):  # the claim negates something the premise never negates
             return 0.0
-        if bool(_NEG & set(h)) != bool(_NEG & set(p[idx[0] : idx[-1] + 1])):
-            return 0.0
-        return len(idx) / len(h)
+        missing = sum(1 for t in h if t not in P.stems)
+        if missing:
+            return _UNCERTAINTY_SCORE * (len(h) - missing) / len(h)
+        claim_marks = {t for t in h if t in _QUAL}
+        claim_conds = {t for t in h if t in _COND}
+        for sent in P.sentences:
+            sent_cond = set().union(*(c.cond for c in sent))
+            for i in range(len(sent)):
+                for j in range(i, min(len(sent), i + H.cdelims + 1)):
+                    span = sent[i : j + 1]
+                    if not _is_subsequence(h, [s for c in span for s in c.stems]):
+                        continue
+                    marks = set().union(*(c.marks for c in span))
+                    neg = set().union(*(c.neg for c in span))
+                    if (marks - claim_marks) or (sent_cond - claim_conds) or (H.neg - neg):
+                        continue
+                    return 1.0
+        return _UNCERTAINTY_SCORE
 
 
 class DebertaNLI:
@@ -125,7 +250,14 @@ def parse_claims(answer: str) -> list[tuple[str, list[int]]]:
     """(claim text without markers, cited indices) per sentence. ``X. [1]`` is read as ``X [1].``"""
     normalised = _MARK_THEN_END.sub(lambda m: m.group(2).strip() + m.group(1) + " ", answer)
     claims = []
-    for seg in _SPLIT.split(normalised):
+    segments, pos = [], 0
+    for m in _SPLIT.finditer(normalised):
+        if "\n" not in m.group() and _ends_with_abbreviation(normalised[pos : m.start()]):
+            continue  # abbreviation such as "Dr." or "e.g.": not a sentence end
+        segments.append(normalised[pos : m.start()])
+        pos = m.end()
+    segments.append(normalised[pos:])
+    for seg in segments:
         seg = seg.strip()
         if not seg:
             continue
@@ -175,6 +307,8 @@ def verify_attribution(statement: str, context_chunks: Sequence[str], nli: NLIMo
 
 class NLIVerifier:
     def __init__(self, nli: NLIModel | None = None, threshold: float = DEFAULT_THRESHOLD):
+        if not (0.0 < threshold <= 1.0):
+            raise ValueError(f"threshold must be in (0, 1], got {threshold!r}")
         self.nli, self.threshold = nli or LexicalEntailment(), threshold
 
     def verify(self, answer: str, contexts: Sequence[Context]) -> list[ClaimVerdict]:

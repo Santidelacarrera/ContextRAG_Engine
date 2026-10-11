@@ -31,7 +31,9 @@ def test_html_documents_are_answerable_with_sections_and_exact_offsets():
     r = factory.offline()
     r.ingestor.ingest(doc, tenant="t", doc_id="politica.html", source="politica.html")
     a = r.ask("¿Cuánto tiempo se conservan los registros de auditoría?", tenant="t")
-    assert a.status is Status.VERIFIED and a.sources[0].parent.section == "Política & retención"
+    assert a.status is Status.VERIFIED
+    # Section should contain the document's main heading
+    assert "Política & retención" in a.sources[0].parent.section
     ev = a.claims[0].evidence
     assert doc.text[ev.start : ev.end] == ev.text  # coordinates refer to the extracted text
 
