@@ -28,6 +28,7 @@ from ..generation.llm import GenerationError
 from ..pipeline import ContextRAG
 from .auth import KeyStore
 from .ratelimit import RateLimiter
+from .retrieval import register_retrieve
 
 log = logging.getLogger("contextrag")
 
@@ -66,9 +67,9 @@ class Caller:
 
 
 def create_app(rag: ContextRAG | None = None, keystore: KeyStore | None = None,
-               rate_limit_per_min: int | None = None) -> FastAPI:
+               rate_limit_per_min: int | None = None, tenant_db=None) -> FastAPI:
     app = FastAPI(title="ContextRAG Engine", version="0.3.0")
-    state = {"rag": rag}
+    state = {"rag": rag, "db": tenant_db}
     keystore = keystore if keystore is not None else KeyStore.from_env()
     if rate_limit_per_min is None and os.getenv("CONTEXTRAG_RATE_LIMIT_PER_MIN"):
         rate_limit_per_min = int(os.environ["CONTEXTRAG_RATE_LIMIT_PER_MIN"])
@@ -89,6 +90,13 @@ def create_app(rag: ContextRAG | None = None, keystore: KeyStore | None = None,
 
             state["rag"] = factory.from_env()
         return state["rag"]
+
+    def get_db():
+        if state["db"] is None:
+            from ..db import TenantDB
+
+            state["db"] = TenantDB.from_env()  # None when POSTGRES_DSN is not set
+        return state["db"]
 
     def caller_for(action: str):
         def dep(x_api_key: str | None = Header(None), x_tenant: str | None = Header(None),
@@ -164,6 +172,8 @@ def create_app(rag: ContextRAG | None = None, keystore: KeyStore | None = None,
             groups = frozenset(body.groups) if body.groups else c.groups
         a = get_rag().ask(body.question, tenant=c.tenant, groups=groups, user=c.id or x_user, top_k=body.top_k)
         return a.to_response()
+
+    register_retrieve(app, get_rag=get_rag, get_db=get_db, caller_dep=caller_for)
 
     @app.delete("/documents/{doc_id:path}")
     def delete_document(doc_id: str, c: Caller = Depends(caller_for("delete"))):

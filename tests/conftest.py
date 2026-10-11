@@ -1,6 +1,57 @@
+import os
+import shutil
+import socket
+import subprocess
+import tempfile
+from pathlib import Path
+
 import pytest
 
 from contextrag import factory
+
+
+def free_port():
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+@pytest.fixture(scope="module")
+def pg_dsn():
+    """A throwaway PostgreSQL 16 server (superuser DSN). Skipped when the binaries are not installed."""
+    pytest.importorskip("psycopg")
+    bindir = next(iter(sorted(Path("/usr/lib/postgresql").glob("*/bin"))), None)
+    if not bindir or not (bindir / "initdb").exists():
+        pytest.skip("postgresql not installed")
+    data = Path(tempfile.mkdtemp(prefix="contextrag-pg-"))  # must be reachable by the postgres OS user
+    port = free_port()
+    prefix = []
+    if os.geteuid() == 0:  # postgres refuses to run as root
+        if not shutil.which("runuser"):
+            pytest.skip("cannot drop root privileges")
+        os.chmod(data, 0o700)
+        shutil.chown(data, "postgres")
+        prefix = ["runuser", "-u", "postgres", "--"]
+    run = lambda *a, **k: subprocess.run([*prefix, *a], check=True, capture_output=True, **k)
+    run(str(bindir / "initdb"), "-D", str(data), "-A", "trust", "-U", "postgres")
+    run(str(bindir / "pg_ctl"), "-D", str(data), "-l", str(data / "server.log"),
+        "-o", f"-p {port} -k {data} -c listen_addresses=127.0.0.1", "-w", "-t", "30", "start")
+    try:
+        yield f"postgresql://postgres@127.0.0.1:{port}/postgres"
+    finally:
+        run(str(bindir / "pg_ctl"), "-D", str(data), "-m", "immediate", "stop")
+        shutil.rmtree(data, ignore_errors=True)
+
+
+@pytest.fixture(scope="module")
+def pg_app_dsn(pg_dsn):
+    """Connection string of a plain login role: no superuser, no BYPASSRLS, not the table owner."""
+    import psycopg
+
+    with psycopg.connect(pg_dsn, autocommit=True) as c:
+        c.execute("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'contextrag_app') "
+                  "THEN CREATE ROLE contextrag_app LOGIN; END IF; END $$")
+    return pg_dsn.replace("postgresql://postgres@", "postgresql://contextrag_app@", 1)
 
 POLICY = """# Retención de datos
 

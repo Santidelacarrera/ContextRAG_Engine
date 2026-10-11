@@ -33,6 +33,8 @@ respuesta auditada (+ coordenadas exactas doc/offset/página)      si no:  "No s
 | `contextrag/generation/llm.py` | Claude (`AnthropicLLM`), Ollama, y `ExtractiveLLM` offline |
 | `contextrag/pipeline.py` | Bucle recuperar → generar → verificar → reintentar → fallback; caché de consultas |
 | `contextrag/api/server.py` | FastAPI: `/ingest`, `/query`, `/healthz` (+ `GET /documents`, `DELETE /documents/{id}`, `DELETE /tenant`, `/audit`, `/metrics`) |
+| `contextrag/api/retrieval.py` | `POST /api/v1/retrieve` para otros servicios: fragmentos con metadatos y puntuaciones, borrador extractivo **no verificado**, auditoría de cada recuperación dentro de una transacción con `app.tenant` fijado (RLS). Falla cerrado (503) si no puede auditar |
+| `contextrag/db.py` | `TenantDB`: pool de conexiones con el rol de aplicación (`POSTGRES_DSN`), una transacción por tenant y tabla `retrieval_audit` solo-inserción |
 | `contextrag/api/auth.py`, `ratelimit.py` | Claves ligadas a tenant/grupos/rol (solo digests SHA-256) y límite de tasa por tenant |
 | `contextrag/eval/` | Arnés de evaluación + conjuntos adversarial y end-to-end (`python -m contextrag eval`) |
 | `contextrag/__main__.py` | CLI: `serve`, `ingest`, `ask`, `eval` (`--sweep` calibra el umbral), `keygen`, `erase`, `audit-purge` |
