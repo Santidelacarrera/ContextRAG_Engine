@@ -32,7 +32,7 @@ def from_env() -> ContextRAG:
 
     EMBEDDER=hashing|bge (EMBED_MODEL)   RERANKER=lexical|cross-encoder|cohere (COHERE_API_KEY, RERANK_MIN_SCORE: relevance floor)
     NLI=lexical|deberta (NLI_MODEL)                  LLM=extractive|anthropic|ollama (LLM_MODEL, OLLAMA_HOST)
-    QDRANT_URL (else embedded in-memory)  POSTGRES_DSN (else in-memory audit)  REDIS_URL (else in-memory cache)
+    QDRANT_URL (else embedded in-memory)  POSTGRES_DSN (else in-memory audit; POSTGRES_ADMIN_DSN = owner for schema/retention)  REDIS_URL (else in-memory cache)
     BM25=rank|incremental (rank = rank_bm25, rebuilt after changes; incremental = same scores, fast under frequent ingests)
     MASTER_KEY (enables per-tenant encryption of chunk text at rest)  CONTEXTRAG_* (see Settings)
     """
@@ -101,7 +101,7 @@ def from_env() -> ContextRAG:
     if env("POSTGRES_DSN"):
         from .audit import PostgresAudit
 
-        audit = PostgresAudit(env("POSTGRES_DSN"), embedder.dim)
+        audit = PostgresAudit(env("POSTGRES_DSN"), embedder.dim, admin_dsn=env("POSTGRES_ADMIN_DSN") or None)
     else:
         audit = InMemoryAudit()
 

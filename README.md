@@ -81,7 +81,8 @@ Configuración por variables de entorno (también pasables al compose):
 | Variable | Valores | Efecto |
 |---|---|---|
 | `QDRANT_URL` | `http://qdrant:6333` | Vector DB (si falta: en memoria) |
-| `POSTGRES_DSN` | `postgresql://user:pw@host/db` | Auditoría persistente (+ pgvector si la extensión existe) |
+| `POSTGRES_DSN` | `postgresql://user:pw@host/db` | Auditoría persistente (+ pgvector si la extensión existe). Debe ser un rol **no** superusuario, sin `BYPASSRLS` y no propietario de la tabla: así RLS aísla los tenants en la base de datos |
+| `POSTGRES_ADMIN_DSN` | `postgresql://owner:pw@host/db` | Propietario del esquema: creación de tabla, particiones mensuales y retención (opcional; por defecto usa `POSTGRES_DSN`) |
 | `REDIS_URL` | `redis://redis:6379/0` | Caché de embeddings y de respuestas verificadas |
 | `BM25` | `rank` (defecto, `rank_bm25`) \| `incremental` | `incremental`: mismas puntuaciones que `rank_bm25` (probado) pero sin reconstruir el índice tras cada ingesta |
 | `EMBEDDER` / `EMBED_MODEL` | `hashing` \| `bge` / `BAAI/bge-large-en-v1.5` | Embeddings (`bge` requiere extra `models`) |

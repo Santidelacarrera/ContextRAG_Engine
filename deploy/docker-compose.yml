@@ -16,10 +16,12 @@ services:
       POSTGRES_USER: contextrag
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-contextrag}
       POSTGRES_DB: contextrag
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-contextrag_app}   # password of the plain role the API connects as
     ports: ["5432:5432"]
     volumes:
       - pg_data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./init-roles.sh:/docker-entrypoint-initdb.d/init-roles.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U contextrag -d contextrag"]
       interval: 5s
@@ -42,7 +44,10 @@ services:
       dockerfile: deploy/Dockerfile
     environment:
       QDRANT_URL: http://qdrant:6333
-      POSTGRES_DSN: postgresql://contextrag:${POSTGRES_PASSWORD:-contextrag}@postgres:5432/contextrag
+      # the API runs as a plain role, so row-level security on the audit table applies to it
+      POSTGRES_DSN: postgresql://contextrag_app:${APP_DB_PASSWORD:-contextrag_app}@postgres:5432/contextrag
+      # owner of the audit table: schema, monthly partitions and retention only
+      POSTGRES_ADMIN_DSN: postgresql://contextrag:${POSTGRES_PASSWORD:-contextrag}@postgres:5432/contextrag
       REDIS_URL: redis://redis:6379/0
       BM25: ${BM25:-incremental}            # same scores as rank_bm25 but no rebuild per ingest (measured ~1.8x qps under mixed load)
       EMBEDDER: ${EMBEDDER:-hashing}        # hashing | bge
