@@ -55,6 +55,11 @@ class ContextRAG:
                  len(answer.sources), ms, answer.reason)
         return answer
 
+    def count(self, key: str, n: float = 1) -> None:
+        """Increment an in-process counter exposed by ``metrics_text`` (e.g. ``retrieve_rejected_total{reason="x"}``)."""
+        with self._stats_lock:
+            self._stats[key] += n
+
     def metrics_text(self) -> str:
         """Prometheus text exposition of in-process counters."""
         with self._stats_lock:

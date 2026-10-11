@@ -19,10 +19,11 @@ import uuid
 from collections.abc import Callable
 from typing import Literal
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..core.events import emit
 from ..generation.llm import NO_ANSWER, ExtractiveLLM
 from ..pipeline import ContextRAG
 
@@ -63,12 +64,12 @@ class RetrieveOut(BaseModel):
 
 
 def db_error_status(exc: Exception) -> tuple[int, str] | None:
-    """HTTP status for a database failure, or None if ``exc`` is not one."""
+    """HTTP status and reason code for a database failure, or None if ``exc`` is not one."""
     import psycopg
     from psycopg_pool import PoolClosed, PoolTimeout
 
     if isinstance(exc, psycopg.errors.InsufficientPrivilege):  # RLS denied the statement
-        return 403, "tenant_not_authorized"
+        return 403, "rls_denied"
     if isinstance(exc, (psycopg.OperationalError, PoolTimeout, PoolClosed)):  # unreachable, exhausted or shut down
         return 503, "database_unavailable"
     if isinstance(exc, psycopg.Error):
@@ -76,20 +77,36 @@ def db_error_status(exc: Exception) -> tuple[int, str] | None:
     return None
 
 
+_ERROR_CODE = {"tenant_mismatch": "tenant_mismatch", "rls_denied": "tenant_not_authorized",
+               "database_unavailable": "database_unavailable", "database_error": "database_error",
+               "database_not_configured": "retrieval_store_unavailable"}
+
+
 def register_retrieve(app: FastAPI, *, get_rag: Callable[[], ContextRAG], get_db: Callable[[], object | None],
                       caller_dep: Callable) -> None:
+    def refuse(rag: ContextRAG, status: int, reason: str, request_id: str, **fields) -> JSONResponse:
+        """A rejection or failure: counted per reason, logged as one JSON event, returned as a JSON error."""
+        level = logging.ERROR if status >= 500 else logging.WARNING
+        event = "retrieve.failed" if status >= 500 else "retrieve.rejected"
+        rag.count(f'retrieve_{"failed" if status >= 500 else "rejected"}_total{{reason="{reason}"}}')
+        emit(log, level, event, exc_info=status >= 500, request_id=request_id, reason=reason, http_status=status,
+             **fields)
+        return JSONResponse({"error": _ERROR_CODE[reason], "request_id": request_id,
+                             "detail": "the request was not served; see server logs"}, status_code=status,
+                            headers={"X-Request-Id": request_id, **({"Retry-After": "5"} if status == 503 else {})})
+
     @app.post("/api/v1/retrieve", response_model=RetrieveOut)
-    def retrieve(body: RetrieveIn, c=Depends(caller_dep("query"))):
+    def retrieve(body: RetrieveIn, response: Response, c=Depends(caller_dep("query"))):
+        request_id = str(uuid.uuid4())
+        response.headers["X-Request-Id"] = request_id
+        rag = get_rag()
+        who = {"tenant_id": c.tenant, "user_id": c.id}
         if body.tenant_id != c.tenant:
-            log.warning("retrieve refused tenant=%s claimed=%s reason=tenant_mismatch", c.tenant, body.tenant_id)
-            raise HTTPException(403, "tenant_id does not match the caller's tenant")
+            return refuse(rag, 403, "tenant_mismatch", request_id, claimed_tenant_id=body.tenant_id, **who)
         db = get_db()
         if db is None:
-            log.error("retrieve unavailable tenant=%s reason=no_database", c.tenant)
-            return JSONResponse({"error": "retrieval_store_unavailable",
-                                 "detail": "POSTGRES_DSN is not configured"}, status_code=503)
+            return refuse(rag, 503, "database_not_configured", request_id, **who)
 
-        rag = get_rag()
         t0 = time.perf_counter()
         groups = c.groups or frozenset()  # unbound callers: public chunks only (no body-supplied groups here)
         try:
@@ -105,20 +122,17 @@ def register_retrieve(app: FastAPI, *, get_rag: Callable[[], ContextRAG], get_db
             mapped = db_error_status(exc)
             if mapped is None:
                 raise
-            status, code = mapped
-            log.error("retrieve failed tenant=%s user=%s error=%s status=%d", c.tenant, c.id, code, status,
-                      exc_info=status == 500)
-            headers = {"Retry-After": "5"} if status == 503 else None
-            return JSONResponse({"error": code, "detail": "the request was not served; see server logs"},
-                                status_code=status, headers=headers)
+            status, reason = mapped
+            return refuse(rag, status, reason, request_id, error_class=type(exc).__name__, **who)
 
         fragments = [FragmentOut(index=ctx.index, score=ctx.score, doc_id=ctx.parent.doc_id,
                                  source=ctx.parent.source, section=ctx.parent.section, page=ctx.parent.page,
                                  start=ctx.parent.start, end=ctx.parent.end, text=ctx.parent.text)
                      for ctx in contexts]
         draft = _extractive.generate(body.query, contexts) if contexts else NO_ANSWER
-        log.info("retrieve tenant=%s user=%s status=%s fragments=%d top_k=%d latency_ms=%.1f",
-                 c.tenant, c.id, "ok" if fragments else "no_results", len(fragments), body.top_k, latency_ms)
-        return RetrieveOut(status="ok" if fragments else "no_results", tenant_id=c.tenant, query=body.query,
-                           fragments=fragments, draft_answer=None if draft == NO_ANSWER else draft,
-                           latency_ms=round(latency_ms, 2))
+        status = "ok" if fragments else "no_results"
+        rag.count(f'retrieve_served_total{{status="{status}"}}')
+        emit(log, logging.INFO, "retrieve.served", request_id=request_id, status=status, fragments=len(fragments),
+             top_k=body.top_k, latency_ms=round(latency_ms, 2), **who)
+        return RetrieveOut(status=status, tenant_id=c.tenant, query=body.query, fragments=fragments,
+                           draft_answer=None if draft == NO_ANSWER else draft, latency_ms=round(latency_ms, 2))

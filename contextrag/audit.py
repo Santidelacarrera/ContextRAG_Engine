@@ -3,22 +3,20 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import threading
 import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict
-from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
+from . import retention
 from .core.models import Answer
 
 log = logging.getLogger("contextrag.audit")
 
 TENANT_SETTING = "app.tenant"
-_PARTITION = re.compile(r"^answer_audit_(\d{4})(\d{2})$")
 
 
 def record_of(tenant: str, user: str | None, answer: Answer) -> dict:
@@ -122,7 +120,8 @@ class PostgresAudit:
         from psycopg import sql
 
         col = f"vector({self.dim})" if self.has_vector else "double precision[]"
-        with self._lock:
+        with self._lock, self.admin.transaction():
+            self.admin.execute("SELECT pg_advisory_xact_lock(hashtext('contextrag.schema.answer_audit'))")
             row = self.admin.execute("SELECT relkind FROM pg_class WHERE oid = to_regclass('answer_audit')").fetchone()
             if row and row[0] != "p":
                 raise RuntimeError("answer_audit exists but is not partitioned; migrate it before starting")
@@ -165,30 +164,18 @@ class PostgresAudit:
         return bool(row and row[0])
 
     # -- partitions -------------------------------------------------------------------------
-    @staticmethod
-    def _month_of(ts: float) -> tuple[str, datetime, datetime]:
-        start = datetime.fromtimestamp(ts, tz=timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        return f"answer_audit_{start:%Y%m}", start, (start + timedelta(days=32)).replace(day=1)
-
     def ensure_partition(self, ts: float) -> None:
-        """Create the monthly partition that holds ``ts`` if it does not exist yet."""
-        from psycopg import sql
-
-        name, start, end = self._month_of(ts)
+        """Create the monthly partition that holds ``ts`` if it does not exist yet (one DDL per month)."""
+        name = retention.partition_name("answer_audit", retention.month_of(ts))
         with self._lock:
-            if name in self._partitions:
-                return
-            self.admin.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} PARTITION OF answer_audit "
-                                       "FOR VALUES FROM ({}) TO ({})")
-                               .format(sql.Identifier(name), sql.Literal(start), sql.Literal(end)))
-            self._partitions.add(name)
+            if name not in self._partitions:
+                retention.ensure_partition(self.admin, "answer_audit", ts)
+                self._partitions.add(name)
 
     def ensure_partitions(self, months_ahead: int = 2) -> None:
         """Create the partitions for the current month and the next ``months_ahead`` months."""
-        _, start, _ = self._month_of(time.time())
-        for _ in range(months_ahead + 1):
-            self.ensure_partition(start.timestamp())
-            start = (start + timedelta(days=32)).replace(day=1)
+        with self._lock:
+            retention.ensure_partitions(self.admin, "answer_audit", months_ahead)
 
     # -- tenant-scoped transactions ---------------------------------------------------------
     @contextmanager
@@ -229,29 +216,13 @@ class PostgresAudit:
             return conn.execute("DELETE FROM answer_audit WHERE tenant = %s", (tenant,)).rowcount
 
     def purge(self, older_than_seconds):
-        """Retention across tenants (admin connection). Whole months that expired are dropped in one step; the
-        boundary month is deleted row by row. Returns the number of records removed."""
-        from psycopg import sql
-
-        cutoff = datetime.now(timezone.utc) - timedelta(seconds=float(older_than_seconds))
-        removed = 0
+        """Retention across tenants (admin connection): whole expired months are dropped, the rest deleted row by
+        row. Returns the number of records removed."""
         with self._lock:
-            names = [r[0] for r in self.admin.execute(
-                "SELECT c.relname FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid "
-                "WHERE i.inhparent = to_regclass('answer_audit')").fetchall()]
-            for name in names:
-                m = _PARTITION.match(name)
-                if not m:
-                    continue
-                year, month = int(m.group(1)), int(m.group(2))
-                end = datetime(year + (month == 12), month % 12 + 1, 1, tzinfo=timezone.utc)
-                if end > cutoff:
-                    continue
-                removed += self.admin.execute(sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(name))).fetchone()[0]
-                self.admin.execute(sql.SQL("DROP TABLE {}").format(sql.Identifier(name)))
-                self._partitions.discard(name)
-            removed += self.admin.execute("DELETE FROM answer_audit WHERE ts < %s", (cutoff,)).rowcount
-        return removed
+            result = retention.apply_retention(self.admin, "answer_audit",
+                                               retention.older_than(float(older_than_seconds)))
+            self._partitions.difference_update(result.dropped_partitions)
+        return result.rows_removed
 
     def health(self):
         try:

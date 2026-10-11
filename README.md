@@ -253,3 +253,41 @@ reconstrucción. No se ha medido con Qdrant ni con modelos reales.
 * Los vectores no se cifran (deben ser buscables); sólo el texto. `X-Tenant` no es autenticación: debe fijarlo un
   gateway de confianza. PDF: sólo texto extraíble (sin OCR ni imágenes). El índice BM25 vive en memoria por proceso
   (se reconstruye desde Qdrant); con varias réplicas, reingestas en una no se reflejan en las otras hasta reiniciar.
+
+## Operación: retención, migraciones y observabilidad
+
+**Retención de auditoría.** `answer_audit` y `retrieval_audit` están particionadas por mes (UTC). Para conservar los
+últimos N meses calendario (incluido el actual):
+
+```bash
+POSTGRES_ADMIN_DSN=postgresql://contextrag:…@postgres:5432/contextrag \
+  python -m contextrag retention --months 12 --dry-run   # informa, no cambia nada
+POSTGRES_ADMIN_DSN=… python -m contextrag retention --months 12
+```
+
+Las particiones completas anteriores al corte se eliminan con `DROP TABLE` (operación de catálogo, sin borrado fila a
+fila); las filas sueltas anteriores al corte se borran. Cada tabla se procesa en su propia transacción. No hay archivado
+previo: lo eliminado no se recupera. Programación sugerida (cron, el día 1 de cada mes a las 03:00):
+`0 3 1 * * cd /app && POSTGRES_ADMIN_DSN=… python -m contextrag retention --months 12`. Usa el DSN del propietario, nunca el
+del rol de la aplicación.
+
+**Migración 001 (bases existentes).** Si `retrieval_audit` se creó como tabla no particionada (versiones anteriores),
+la aplicación se niega a arrancar hasta aplicarla. Es una transacción única que renombra la tabla antigua a
+`retrieval_audit_legacy` (se conserva; bórrela a mano tras verificar los recuentos):
+
+```bash
+psql "$POSTGRES_ADMIN_DSN" -v ON_ERROR_STOP=1 -v app_role=contextrag_app \
+     -f deploy/migrations/001_retrieval_audit_partitioned.sql
+```
+
+**Eventos y métricas.** Cada rechazo o fallo de `POST /api/v1/retrieve` emite una línea JSON en el logger
+`contextrag.retrieve`, con `event` (`retrieve.served`, `retrieve.rejected` o `retrieve.failed`), `request_id` (también en
+la cabecera `X-Request-Id`), `tenant_id`, `user_id`, `reason`, `http_status` y, en fallos de base de datos,
+`error_class` (nunca el mensaje de error, que puede contener el DSN). Motivos: `tenant_mismatch` (403),
+`rls_denied` (403), `database_unavailable` (503, con `Retry-After`), `database_not_configured` (503), `database_error`
+(500). En `/metrics`: `contextrag_retrieve_rejected_total{reason}`, `contextrag_retrieve_failed_total{reason}` y
+`contextrag_retrieve_served_total{status}`.
+
+**Pool.** `TenantDB` usa `psycopg_pool` con `max_size=10` por defecto y espera de 5 s; con varios workers, la suma de los
+`max_size` debe quedar por debajo de `max_connections` de PostgreSQL. Si el pool se agota, la petición falla cerrada
+(503) en lugar de encolarse indefinidamente.

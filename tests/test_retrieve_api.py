@@ -1,5 +1,6 @@
 """POST /api/v1/retrieve: contract, auth binding, error mapping, fail-closed audit and real RLS behaviour."""
 import contextlib
+import json
 import logging
 
 import pytest
@@ -174,17 +175,67 @@ def test_without_a_database_the_endpoint_is_unavailable_not_silently_unaudited(r
 
 # ---- logging ----------------------------------------------------------------------------
 
-def test_each_request_is_logged_with_its_tenant(rag, caplog):
+def events(caplog, name):
+    """Structured events emitted by the retrieval route, parsed from their JSON log lines."""
+    out = []
+    for r in caplog.records:
+        if r.name == "contextrag.retrieve" and r.getMessage().startswith("{"):
+            e = json.loads(r.getMessage())
+            if e["event"] == name:
+                out.append((r, e))
+    return out
+
+
+def test_each_served_request_emits_a_structured_event_with_its_tenant(rag, caplog):
     caplog.set_level(logging.INFO, logger="contextrag.retrieve")
-    post(TestClient(create_app(rag, tenant_db=FakeDB())), {"tenant_id": "acme", "query": QUESTION})
-    msgs = [r.getMessage() for r in caplog.records if r.name == "contextrag.retrieve"]
-    assert any("tenant=acme" in m and "status=ok" in m for m in msgs)
+    r = post(TestClient(create_app(rag, tenant_db=FakeDB())), {"tenant_id": "acme", "query": QUESTION})
+    [(_, e)] = events(caplog, "retrieve.served")
+    assert e["tenant_id"] == "acme" and e["status"] == "ok" and e["fragments"] >= 1
+    assert e["request_id"] == r.headers["X-Request-Id"] and e["latency_ms"] >= 0
 
 
-def test_refused_requests_are_logged_with_the_claimed_tenant(rag, caplog):
+def test_refused_requests_are_logged_with_claimed_and_authenticated_tenant_and_reason(rag, caplog):
     caplog.set_level(logging.WARNING, logger="contextrag.retrieve")
-    post(TestClient(create_app(rag, tenant_db=FakeDB())), {"tenant_id": "rival", "query": QUESTION})
-    assert any("tenant=acme" in r.getMessage() and "claimed=rival" in r.getMessage() for r in caplog.records)
+    r = post(TestClient(create_app(rag, tenant_db=FakeDB())), {"tenant_id": "rival", "query": QUESTION})
+    assert r.status_code == 403 and r.json()["error"] == "tenant_mismatch"
+    [(rec, e)] = events(caplog, "retrieve.rejected")
+    assert rec.levelno == logging.WARNING
+    assert e["tenant_id"] == "acme" and e["claimed_tenant_id"] == "rival" and e["reason"] == "tenant_mismatch"
+    assert e["http_status"] == 403 and e["request_id"] == r.headers["X-Request-Id"]
+
+
+def test_rls_denials_are_logged_as_403_events_with_the_tenant(rag, caplog):
+    import psycopg
+
+    caplog.set_level(logging.WARNING, logger="contextrag.retrieve")
+    c = TestClient(create_app(rag, tenant_db=FakeDB(open_error=psycopg.errors.InsufficientPrivilege("RLS"))))
+    post(c, {"tenant_id": "acme", "query": QUESTION})
+    [(_, e)] = events(caplog, "retrieve.rejected")
+    assert e["reason"] == "rls_denied" and e["http_status"] == 403 and e["tenant_id"] == "acme"
+    assert e["error_class"] == "InsufficientPrivilege"
+
+
+def test_pool_failures_are_logged_as_503_events_without_connection_details(rag, caplog):
+    import psycopg
+
+    caplog.set_level(logging.ERROR, logger="contextrag.retrieve")
+    c = TestClient(create_app(rag, tenant_db=FakeDB(open_error=psycopg.OperationalError("password=hunter2 host=db"))))
+    r = post(c, {"tenant_id": "acme", "query": QUESTION})
+    [(rec, e)] = events(caplog, "retrieve.failed")
+    assert rec.levelno == logging.ERROR and e["reason"] == "database_unavailable" and e["http_status"] == 503
+    assert e["tenant_id"] == "acme" and e["error_class"] == "OperationalError"
+    assert "hunter2" not in rec.getMessage() and r.headers["Retry-After"] == "5"
+
+
+def test_metrics_count_rejections_and_failures_by_reason(rag):
+    import psycopg
+
+    c = TestClient(create_app(rag, tenant_db=FakeDB(open_error=psycopg.errors.InsufficientPrivilege("RLS"))))
+    post(c, {"tenant_id": "rival", "query": QUESTION})  # tenant_mismatch
+    post(c, {"tenant_id": "acme", "query": QUESTION})   # rls_denied
+    text = rag.metrics_text()
+    assert 'contextrag_retrieve_rejected_total{reason="tenant_mismatch"} 1' in text
+    assert 'contextrag_retrieve_rejected_total{reason="rls_denied"} 1' in text
 
 
 # ---- real PostgreSQL: RLS on the transaction and on the audit table -----------------------

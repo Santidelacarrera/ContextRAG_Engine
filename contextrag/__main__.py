@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import logging
 import sys
@@ -42,6 +43,10 @@ def main(argv: list[str] | None = None) -> int:
 
     pa = sub.add_parser("audit-purge", help="retention: delete audit records older than N days (all tenants)")
     pa.add_argument("--older-than-days", type=float, required=True)
+
+    rt = sub.add_parser("retention", help="keep the last N calendar months of audit data (admin DSN; run from cron)")
+    rt.add_argument("--months", type=int, required=True, help="calendar months to keep, including the current one")
+    rt.add_argument("--dry-run", action="store_true", help="report what would be removed, change nothing")
 
     e = sub.add_parser("eval", help="run the built-in (or custom) evaluation; exit 1 if anything is unsafe")
     e.add_argument("--verifier-cases", help="JSON file of {premise, claim, label, category, id}")
@@ -93,6 +98,22 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "audit-purge":
         print(json.dumps({"purged": factory.from_env().purge_audit(args.older_than_days)}))
+        return 0
+
+    if args.cmd == "retention":
+        import os
+
+        import psycopg
+
+        from . import retention
+
+        dsn = os.getenv("POSTGRES_ADMIN_DSN") or os.getenv("POSTGRES_DSN")
+        if not dsn:
+            print("POSTGRES_ADMIN_DSN (or POSTGRES_DSN) is required", file=sys.stderr)
+            return 2
+        with psycopg.connect(dsn, autocommit=True) as conn:
+            results = retention.run_retention(conn, args.months, dry_run=args.dry_run)
+        print(json.dumps([dataclasses.asdict(r) for r in results], indent=2))
         return 0
 
     if args.cmd == "ask":
