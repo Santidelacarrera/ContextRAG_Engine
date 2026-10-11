@@ -1,5 +1,6 @@
 """POST /api/v1/retrieve: contract, auth binding, error mapping, fail-closed audit and real RLS behaviour."""
 import contextlib
+import re
 import json
 import logging
 
@@ -14,6 +15,7 @@ from contextrag.api.server import create_app
 from conftest import POLICY
 
 URL = "/api/v1/retrieve"
+UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 QUESTION = "¿Cuánto tiempo se conservan los registros de auditoría?"
 H = {"X-Tenant": "acme"}
 
@@ -291,3 +293,36 @@ def test_endpoint_returns_503_when_the_database_is_shut_down(rag, pg_dsn, pg_app
     r = post(TestClient(create_app(rag, tenant_db=db)), {"tenant_id": "acme", "query": QUESTION})
     assert r.status_code == 503 and r.json()["error"] == "database_unavailable"
     assert db.health() is False
+
+
+# ---- request id on every response ---------------------------------------------------------
+
+def test_every_response_carries_a_request_id_including_auth_failures(rag):
+    keys = KeyStore({hash_key("k-acme"): {"id": "ana", "tenant": "acme", "groups": [], "role": "reader"}})
+    c = TestClient(create_app(rag, keystore=keys, tenant_db=FakeDB()))
+    b = {"tenant_id": "acme", "query": QUESTION}
+    for r in (c.post(URL, json=b), c.post(URL, json=b, headers={"X-API-Key": "bad"}),
+              c.post(URL, json={"tenant_id": "x y"}, headers={"X-API-Key": "k-acme"}),
+              c.post(URL, json=b, headers={"X-API-Key": "k-acme"}), c.get("/healthz")):
+        assert UUID_RE.fullmatch(r.headers["X-Request-Id"]), r.status_code
+
+
+def test_a_well_formed_inbound_request_id_is_kept_for_correlation(rag):
+    c = TestClient(create_app(rag, tenant_db=FakeDB()))
+    r = c.post(URL, json={"tenant_id": "acme", "query": QUESTION}, headers={"X-Tenant": "acme", "X-Request-Id": "orq-42.a:b"})
+    assert r.headers["X-Request-Id"] == "orq-42.a:b" and r.json().get("request_id", "orq-42.a:b") == "orq-42.a:b"
+
+
+@pytest.mark.parametrize("bad", ["has spaces", "x" * 129, "semi;colon", "log\ninjection"])
+def test_a_malformed_inbound_request_id_is_replaced_not_echoed(rag, bad):
+    c = TestClient(create_app(rag, tenant_db=FakeDB()))
+    r = c.post(URL, json={"tenant_id": "acme", "query": QUESTION}, headers={"X-Tenant": "acme", "X-Request-Id": bad})
+    assert r.headers["X-Request-Id"] != bad and UUID_RE.fullmatch(r.headers["X-Request-Id"])
+
+
+def test_missing_database_is_logged_without_a_spurious_traceback(rag, monkeypatch, caplog):
+    monkeypatch.delenv("POSTGRES_DSN", raising=False)
+    caplog.set_level(logging.ERROR, logger="contextrag.retrieve")
+    post(TestClient(create_app(rag)), {"tenant_id": "acme", "query": QUESTION})
+    [rec] = [r for r in caplog.records if r.name == "contextrag.retrieve"]
+    assert not rec.exc_info

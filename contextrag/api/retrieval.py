@@ -19,7 +19,7 @@ import uuid
 from collections.abc import Callable
 from typing import Literal
 
-from fastapi import Depends, FastAPI, Response
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -89,16 +89,16 @@ def register_retrieve(app: FastAPI, *, get_rag: Callable[[], ContextRAG], get_db
         level = logging.ERROR if status >= 500 else logging.WARNING
         event = "retrieve.failed" if status >= 500 else "retrieve.rejected"
         rag.count(f'retrieve_{"failed" if status >= 500 else "rejected"}_total{{reason="{reason}"}}')
-        emit(log, level, event, exc_info=status >= 500, request_id=request_id, reason=reason, http_status=status,
+        emit(log, level, event, exc_info=status >= 500 and "error_class" in fields, request_id=request_id,
+             reason=reason, http_status=status,
              **fields)
         return JSONResponse({"error": _ERROR_CODE[reason], "request_id": request_id,
                              "detail": "the request was not served; see server logs"}, status_code=status,
                             headers={"X-Request-Id": request_id, **({"Retry-After": "5"} if status == 503 else {})})
 
     @app.post("/api/v1/retrieve", response_model=RetrieveOut)
-    def retrieve(body: RetrieveIn, response: Response, c=Depends(caller_dep("query"))):
-        request_id = str(uuid.uuid4())
-        response.headers["X-Request-Id"] = request_id
+    def retrieve(body: RetrieveIn, request: Request, c=Depends(caller_dep("query"))):
+        request_id = getattr(request.state, "request_id", None) or str(uuid.uuid4())
         rag = get_rag()
         who = {"tenant_id": c.tenant, "user_id": c.id}
         if body.tenant_id != c.tenant:

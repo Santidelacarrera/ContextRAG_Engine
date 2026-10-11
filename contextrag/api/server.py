@@ -17,6 +17,8 @@ import binascii
 import hmac
 import logging
 import os
+import re
+import uuid
 from dataclasses import dataclass
 
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -35,6 +37,7 @@ log = logging.getLogger("contextrag")
 MAX_TEXT_CHARS = 5_000_000
 MAX_B64_CHARS = 30_000_000  # ~22 MB of raw bytes
 MAX_DOCS_PER_REQUEST = 50
+REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 
 
 class DocumentIn(BaseModel):
@@ -74,6 +77,17 @@ def create_app(rag: ContextRAG | None = None, keystore: KeyStore | None = None,
     if rate_limit_per_min is None and os.getenv("CONTEXTRAG_RATE_LIMIT_PER_MIN"):
         rate_limit_per_min = int(os.environ["CONTEXTRAG_RATE_LIMIT_PER_MIN"])
     limiter = RateLimiter(rate_limit_per_min) if rate_limit_per_min else None
+
+    @app.middleware("http")
+    async def request_id_header(request, call_next):
+        """Every response carries X-Request-Id: a well-formed inbound id is kept for correlation, anything else is
+        replaced by a fresh UUID. Errors raised before a handler runs (401, 403, 422) get one too."""
+        inbound = request.headers.get("x-request-id", "")
+        request_id = inbound if REQUEST_ID.fullmatch(inbound) else str(uuid.uuid4())
+        request.state.request_id = request_id
+        response = await call_next(request)
+        response.headers["X-Request-Id"] = request_id
+        return response
     if keystore is None and not os.getenv("CONTEXTRAG_API_KEY"):
         log.warning("API is running without authentication (set CONTEXTRAG_KEYS_FILE or CONTEXTRAG_API_KEY)")
 
