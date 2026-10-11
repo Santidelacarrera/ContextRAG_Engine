@@ -1,0 +1,72 @@
+# docker compose -f deploy/docker-compose.yml up -d
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    ports: ["6333:6333"]
+    volumes: [qdrant_data:/qdrant/storage]
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: contextrag
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-contextrag}
+      POSTGRES_DB: contextrag
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-contextrag_app}   # password of the plain role the API connects as
+    ports: ["5432:5432"]
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./init-roles.sh:/docker-entrypoint-initdb.d/init-roles.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U contextrag -d contextrag"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      # the API runs as a plain role, so row-level security on the audit table applies to it
+      POSTGRES_DSN: postgresql://contextrag_app:${APP_DB_PASSWORD:-contextrag_app}@postgres:5432/contextrag
+      # owner of the audit table: schema, monthly partitions and retention only
+      POSTGRES_ADMIN_DSN: postgresql://contextrag:${POSTGRES_PASSWORD:-contextrag}@postgres:5432/contextrag
+      REDIS_URL: redis://redis:6379/0
+      BM25: ${BM25:-incremental}            # same scores as rank_bm25 but no rebuild per ingest (measured ~1.8x qps under mixed load)
+      EMBEDDER: ${EMBEDDER:-hashing}        # hashing | bge
+      RERANKER: ${RERANKER:-lexical}        # lexical | cross-encoder | cohere
+      NLI: ${NLI:-lexical}                  # lexical | deberta
+      LLM: ${LLM:-extractive}               # extractive | anthropic | ollama
+      LLM_MODEL: ${LLM_MODEL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      COHERE_API_KEY: ${COHERE_API_KEY:-}
+      MASTER_KEY: ${MASTER_KEY:-}
+      CONTEXTRAG_API_KEY: ${CONTEXTRAG_API_KEY:-}            # shared secret (trusts X-Tenant)
+      CONTEXTRAG_KEYS_FILE: ${CONTEXTRAG_KEYS_FILE:-}        # per-tenant keys (recommended); mount the file, e.g. -v ./keys.json:/run/keys.json:ro
+      CONTEXTRAG_RATE_LIMIT_PER_MIN: ${CONTEXTRAG_RATE_LIMIT_PER_MIN:-}
+    ports: ["8000:8000"]
+    depends_on:
+      qdrant: {condition: service_healthy}
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+volumes:
+  qdrant_data:
+  pg_data:
