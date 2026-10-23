@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, fields
+from collections.abc import Callable
+from dataclasses import MISSING, dataclass, fields
+from typing import Any
 
 
 @dataclass
@@ -26,7 +28,8 @@ class Settings:
     context_budget_tokens: int = 4096  # == top_k * parent_tokens at the defaults: no behaviour change
     context_safety_margin: float = 0.10  # fraction of the budget held back for tokenizer estimation error
     context_dedupe_jaccard: float = 0.8  # parents this similar to a better-ranked one are dropped
-    context_placement: str = "edges"  # edges: best first and second-best last; descending: best first
+    # descending keeps the pre-existing order; edges is opt-in until an LLM-based experiment shows a gain
+    context_placement: str = "descending"
     # reranking
     reranker_timeout_seconds: float = 10.0  # a reranker call that exceeds this fails the request (never guessed)
     # conversational memory
@@ -36,6 +39,8 @@ class Settings:
     memory_queue_limit: int = 64  # pending compaction jobs; beyond this, scheduling is refused
     memory_job_max_attempts: int = 3
     memory_lease_seconds: int = 300  # a running job not finished within this is considered abandoned
+    memory_history_tokens: int = 1000  # recent turns included in the prompt, newest first, within this budget
+    memory_relevant_k: int = 5  # memories included per request: the ones that match the question
 
     def __post_init__(self):
         # The decision gate: a threshold of 0 (or NaN, or >1) would silently disable -- or make unreachable -- the
@@ -60,14 +65,18 @@ class Settings:
             raise ValueError("memory thresholds must be positive (keep_recent_turns may be 0)")
         if self.memory_workers < 1 or self.memory_queue_limit < 1 or self.memory_job_max_attempts < 1:
             raise ValueError("memory worker, queue and attempt limits must be >= 1")
+        if self.memory_history_tokens < 0 or self.memory_relevant_k < 0:
+            raise ValueError("memory_history_tokens and memory_relevant_k must be >= 0")
         if self.memory_lease_seconds <= 0:
             raise ValueError("memory_lease_seconds must be > 0")
 
     @classmethod
     def from_env(cls, prefix: str = "CONTEXTRAG_") -> "Settings":
-        out = {}
+        out: dict[str, Any] = {}
         for f in fields(cls):
             raw = os.getenv(prefix + f.name.upper())
             if raw is not None:
-                out[f.name] = type(f.default)(raw)
+                default = f.default if f.default is not MISSING else None
+                convert: Callable[[str], Any] = type(default) if default is not None else str
+                out[f.name] = convert(raw)
         return cls(**out)

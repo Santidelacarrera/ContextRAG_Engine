@@ -84,3 +84,37 @@ def test_pipeline_answers_within_the_budget_and_falls_back_when_nothing_fits():
     a = rag.ask("¿Cuánto tiempo se conservan los registros de auditoría?", tenant="acme")
     assert a.status is Status.FALLBACK and "budget" in a.reason
     assert a.sources == []  # nothing that did not fit was sent to the model
+
+
+def test_a_parent_that_does_not_fit_falls_back_to_its_exact_child_span():
+    from contextrag.context.budget import span_context
+    from contextrag.core.models import ChildChunk
+
+    text = words(40, "relleno") + " la auditoría se conserva 7 años " + words(40, "mas")
+    parent = ParentChunk(id="P", doc_id="d", tenant="t", source="d.md", text=text, start=100, end=100 + len(text))
+    start = 100 + text.index("la auditoría")
+    end = 100 + text.index("7 años") + len("7 años")
+    child = ChildChunk(id="C", parent_id="P", doc_id="d", tenant="t", text=text[start - 100:end - 100],
+                       start=start, end=end)
+    parent_ctx = Context(1, parent, 0.9)
+    span = span_context(parent_ctx, child)
+    out = assemble_evidence([parent_ctx], ContextBudget(20), spans={"P": span})
+    assert len(out) == 1 and out[0].parent.id == "C"
+    assert out[0].parent.text == child.text
+    assert out[0].parent.start == start and out[0].parent.end == end  # absolute offsets: attribution stays exact
+
+
+def test_pipeline_answers_from_a_span_when_the_parent_exceeds_the_budget():
+    from contextrag import factory
+    from contextrag.core.config import Settings
+    from contextrag.core.models import Status
+
+    filler = " ".join(f"párrafo{i} relleno sin relación alguna" for i in range(400))
+    doc = f"# Retención de datos\n\n{filler}\n\nLa auditoría se conserva durante 7 años en almacenamiento frío.\n\n{filler}"
+    rag = factory.offline(settings=Settings(parent_tokens=1024, child_tokens=128, child_overlap_tokens=16,
+                                            context_budget_tokens=300, context_safety_margin=0.0))
+    rag.ingestor.ingest_text(doc, tenant="acme", doc_id="long.md")
+    a = rag.ask("¿Cuántos años se conserva la auditoría?", tenant="acme")
+    assert a.status is Status.VERIFIED and "7 años" in a.text
+    ev = a.claims[0].evidence
+    assert doc[ev.start:ev.end] == ev.text  # the claim's coordinates point into the original document

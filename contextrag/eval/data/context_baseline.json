@@ -1,0 +1,9 @@
+{
+  "corpus": "build_long_corpus(n_docs=6, paragraphs=60, facts_per_doc=3, seed=7)",
+  "settings": "defaults (chunking 1024/256, budget 4096, placement descending)",
+  "metrics": {
+    "mean_recall": 1.0,
+    "mean_average_precision": 0.7546
+  },
+  "note": "Synthetic, lexical, deterministic. A drop below these values is a regression on this corpus; it is not evidence about real documents or about answer quality."
+}

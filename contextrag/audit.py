@@ -80,6 +80,13 @@ class InMemoryAudit:
         return True
 
 
+def _current_user(conn) -> str:
+    row = conn.execute("SELECT current_user").fetchone()
+    if row is None:
+        raise RuntimeError("SELECT current_user returned no row")
+    return str(row[0])
+
+
 class PostgresAudit:
     """Audit log in PostgreSQL 16: monthly range partitions and row-level security per tenant.
 
@@ -150,8 +157,8 @@ class PostgresAudit:
                 f"CREATE POLICY tenant_isolation ON answer_audit "
                 f"USING (tenant = current_setting('{TENANT_SETTING}', true)) "
                 f"WITH CHECK (tenant = current_setting('{TENANT_SETTING}', true))")
-            app_role = self.conn.execute("SELECT current_user").fetchone()[0]
-            if app_role != self.admin.execute("SELECT current_user").fetchone()[0]:
+            app_role = _current_user(self.conn)
+            if app_role != _current_user(self.admin):
                 self.admin.execute(sql.SQL("GRANT SELECT, INSERT, DELETE ON answer_audit TO {}")
                                    .format(sql.Identifier(app_role)))
             self.ensure_partitions()

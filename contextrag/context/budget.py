@@ -21,8 +21,10 @@ import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 
+from collections.abc import Mapping
+
 from ..core.chunking import count_tokens
-from ..core.models import Context
+from ..core.models import ChildChunk, Context, ParentChunk
 from ..core.text import tokenize
 
 PLACEMENTS = ("edges", "descending")
@@ -52,6 +54,17 @@ def jaccard(a: set[str], b: set[str]) -> float:
     return len(a & b) / len(union) if union else 1.0
 
 
+def span_context(parent_ctx: Context, child: ChildChunk) -> Context:
+    """The best-matching child of a parent, as evidence in its own right. Its offsets are absolute in the source
+    document, so attribution stays exact: ``document[start:end] == text``. Its ``id`` is the child's, so it is
+    deduplicated like any parent."""
+    p = parent_ctx.parent
+    span = ParentChunk(id=child.id, doc_id=p.doc_id, tenant=p.tenant, source=p.source, text=child.text,
+                       start=child.start, end=child.end, acl=p.acl, section=p.section,
+                       page=None if p.page_breaks else p.page, page_breaks=(), doc_hash=p.doc_hash)
+    return replace(parent_ctx, parent=span)
+
+
 def edge_order(ranked: Sequence[Context]) -> list[Context]:
     """Ranks 1, 3, 5, ... in front; 2, 4, 6, ... reversed at the back. Top-1 first, top-2 last, weakest central."""
     return list(ranked[0::2]) + list(ranked[1::2])[::-1]
@@ -64,8 +77,12 @@ def assemble_evidence(
     dedupe_threshold: float = 0.8,
     placement: str = "edges",
     token_fn: Callable[[str], int] = count_tokens,
+    spans: Mapping[str, Context] | None = None,
 ) -> list[Context]:
-    """Return the selected contexts in prompt order, renumbered 1..n. Empty input gives an empty list."""
+    """Return the selected contexts in prompt order, renumbered 1..n. Empty input gives an empty list.
+
+    ``spans`` maps a parent id to its best-matching span. When a parent does not fit the remaining budget, its span
+    is tried instead, so a long document still contributes the sentence that answers the question."""
     if placement not in PLACEMENTS:
         raise ValueError(f"placement must be one of {PLACEMENTS}, got {placement!r}")
     if not (0.0 < dedupe_threshold <= 1.0):
@@ -77,15 +94,27 @@ def assemble_evidence(
     kept_token_sets: list[set[str]] = []
     used = 0
     for c in ranked:
-        tokens = set(tokenize(c.parent.text))
-        if any(jaccard(tokens, kept) >= dedupe_threshold for kept in kept_token_sets):
+        choice = _first_fit(c, spans, kept_token_sets, used, limit, dedupe_threshold, token_fn)
+        if choice is None:
             continue
-        cost = token_fn(c.parent.text)
-        if used + cost > limit:
-            continue
-        selected.append(c)
-        kept_token_sets.append(tokens)
-        used += cost
+        selected.append(choice[0])
+        kept_token_sets.append(choice[1])
+        used += choice[2]
 
     ordered = edge_order(selected) if placement == "edges" else selected
     return [replace(c, index=position) for position, c in enumerate(ordered, start=1)]
+
+
+def _first_fit(c: Context, spans: Mapping[str, Context] | None, kept: list[set[str]], used: int, limit: int,
+               dedupe_threshold: float, token_fn: Callable[[str], int]) -> tuple[Context, set[str], int] | None:
+    """The parent itself if it fits, otherwise its span if that fits. ``None`` if neither can be admitted."""
+    for candidate in (c, spans.get(c.parent.id) if spans else None):
+        if candidate is None:
+            continue
+        tokens = set(tokenize(candidate.parent.text))
+        if any(jaccard(tokens, k) >= dedupe_threshold for k in kept):
+            continue
+        cost = token_fn(candidate.parent.text)
+        if used + cost <= limit:
+            return candidate, tokens, cost
+    return None

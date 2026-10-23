@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 
 from ..core.ingestion import EmptyDocumentError, from_text, load_base64
 from ..generation.llm import GenerationError
-from ..pipeline import ContextRAG
+from ..pipeline import ContextRAG, ConversationUnavailable
 from .auth import KeyStore
 from .ratelimit import RateLimiter
 from .retrieval import register_retrieve
@@ -60,6 +60,9 @@ class QueryIn(BaseModel):
     question: str = Field(min_length=1, max_length=4000)
     groups: list[str] = Field([], max_length=64)
     top_k: int | None = Field(None, ge=1, le=20)
+    conversation_id: str | None = Field(None, pattern=r"^[A-Za-z0-9._:-]{1,128}$",
+                                        description="Continue a conversation: history and memories are used, "
+                                                    "and the turn is stored. Requires MEMORY_DB.")
 
 
 @dataclass(frozen=True)
@@ -161,7 +164,7 @@ def create_app(rag: ContextRAG | None = None, keystore: KeyStore | None = None,
                 raise HTTPException(422, f"{d.doc_id}: provide exactly one of text / content_base64")
             name = d.source or d.doc_id
             try:
-                doc = from_text(d.text, name, d.kind) if d.text is not None else load_base64(d.content_base64, name)
+                doc = from_text(d.text, name, d.kind) if d.text is not None else load_base64(d.content_base64 or "", name)
                 if d.kind and d.text is None and doc.kind != "pdf":
                     doc.kind = d.kind
             except (binascii.Error, ValueError) as e:
@@ -184,8 +187,22 @@ def create_app(rag: ContextRAG | None = None, keystore: KeyStore | None = None,
             if extra:
                 raise HTTPException(403, f"groups not granted to this key: {sorted(extra)}")
             groups = frozenset(body.groups) if body.groups else c.groups
-        a = get_rag().ask(body.question, tenant=c.tenant, groups=groups, user=c.id or x_user, top_k=body.top_k)
+        try:
+            a = get_rag().ask(body.question, tenant=c.tenant, groups=groups, user=c.id or x_user, top_k=body.top_k,
+                              conversation_id=body.conversation_id)
+        except ConversationUnavailable:
+            return JSONResponse({"error": "conversations_unavailable",
+                                 "detail": "conversation memory is not configured on this server"}, status_code=503)
         return a.to_response()
+
+    @app.delete("/conversations/{conversation_id}")
+    def erase_conversation(conversation_id: str, c: Caller = Depends(caller_for("erase"))):
+        """Erase one conversation of the caller's tenant: its turns, memories and compaction jobs. Idempotent."""
+        rag = get_rag()
+        if rag.memory is None:
+            raise HTTPException(404, "conversation memory not configured")
+        rag.memory.delete_conversation(c.tenant, conversation_id)
+        return {"tenant": c.tenant, "deleted": conversation_id}
 
     register_retrieve(app, get_rag=get_rag, get_db=get_db, caller_dep=caller_for)
 
