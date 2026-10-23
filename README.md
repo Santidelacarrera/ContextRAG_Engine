@@ -291,3 +291,72 @@ la cabecera `X-Request-Id`), `tenant_id`, `user_id`, `reason`, `http_status` y, 
 **Pool.** `TenantDB` usa `psycopg_pool` con `max_size=10` por defecto y espera de 5 s; con varios workers, la suma de los
 `max_size` debe quedar por debajo de `max_connections` de PostgreSQL. Si el pool se agota, la petición falla cerrada
 (503) en lugar de encolarse indefinidamente.
+
+## Presupuesto de contexto, reranking y memoria conversacional
+
+Esta sección describe lo que **está implementado y probado** en esta versión. Lo que no está implementado figura en
+«Pendiente» más abajo.
+
+```mermaid
+flowchart TD
+    Q[Pregunta] --> R[Recuperación híbrida: hijos Qdrant+BM25 → RRF]
+    R --> RR[Reranker: timeout acotado; error si falla o responde incompleto]
+    RR --> P[Padres ordenados por relevancia]
+    P --> A[assemble_evidence: dedupe Jaccard → presupuesto de tokens → colocación en bordes]
+    A --> G[LLM: instrucciones como prefijo cacheable, pasajes en el turno de usuario]
+    G --> V[Verificación NLI + puerta de relevancia]
+    V -->|verificado| OK[Respuesta con citas [n] = posición en el prompt]
+    V -->|no verificado| FB[Fallback determinista]
+    A -->|nada cabe en el presupuesto| FB
+    RR -->|error| ERR[RerankerError: la petición falla, nunca se inventa un ranking]
+```
+
+**Presupuesto de evidencia (`contextrag/context/budget.py`).** Los padres recuperados se deduplican (Jaccard sobre
+tokens de palabra, umbral `CONTEXTRAG_CONTEXT_DEDUPE_JACCARD`), se admiten en orden de relevancia mientras quepan en
+`CONTEXTRAG_CONTEXT_BUDGET_TOKENS` menos `CONTEXTRAG_CONTEXT_SAFETY_MARGIN`, y se colocan con `edges` (el mejor primero,
+el segundo mejor al final, el resto en medio) o `descending`. Las citas `[n]` se renumeran según la posición final.
+El recuento de tokens es **una estimación** (palabras y signos), no el tokenizador del modelo; por eso existe el margen
+de seguridad. Que `edges` mejore las respuestas es una hipótesis que hay que medir, no una garantía.
+
+**Reranking (`contextrag/retrieval/reranker.py`).** `CohereReranker` exige una puntuación por candidato: un índice que no
+llega, o llega dos veces, es un `RerankerError`, nunca un 0.0 inventado. `BoundedReranker` aplica un timeout
+(`CONTEXTRAG_RERANKER_TIMEOUT_SECONDS`), valida el número de puntuaciones y envuelve el error sin exponer el texto de la
+excepción. La fábrica lo aplica a los rerankers remotos o basados en modelo; el léxico local no lo necesita.
+
+**Memoria conversacional (`contextrag/memory/`).** Almacén SQLite de la biblioteca estándar, durable entre reinicios
+(WAL). Modelo de consistencia:
+- Los turnos son inmutables y tienen `seq` contiguo; la versión de la conversación es el último `seq`.
+  `append_turn(expected_version=…)` rechaza escritores obsoletos con `VersionConflict` y no escribe nada.
+- Un job de compactación fija su rango `(compacted_through, through_seq]` al planificarse. Al confirmarse, en una sola
+  transacción: comprueba que sigue siendo el dueño del claim, inserta sus memorias y avanza `compacted_through` **solo
+  hacia delante**. Un job obsoleto o duplicado no puede retroceder el estado ni duplicar memorias. Los turnos que
+  llegaron después del snapshot no se tocan.
+- Los turnos fuente nunca se borran por compactación; cada memoria apunta a su `source_seq`. El borrado solo ocurre
+  con `delete_conversation` (derecho de supresión).
+- Resumidor extractivo: solo promueve frases **escritas por el usuario** que expresan decisión, preferencia o tarea,
+  copiadas textualmente, con `origin=user_stated`, confianza 1.0. Nunca promueve lo que dice el asistente.
+- Worker: pool de hilos acotado (`CONTEXTRAG_MEMORY_WORKERS`), cola acotada (`CONTEXTRAG_MEMORY_QUEUE_LIMIT`; más allá
+  se rechaza con `QueueFull`), reintentos hasta `CONTEXTRAG_MEMORY_JOB_MAX_ATTEMPTS`, fallos registrados solo con un
+  código de error. `recover()` reencola los jobs cuyo lease expiró tras un fallo del proceso.
+
+**Caché de prompts (`contextrag/generation/llm.py`).** `AnthropicLLM` envía las instrucciones del sistema como bloque
+con `cache_control: ephemeral`; los pasajes, la pregunta y el feedback van en el turno de usuario, fuera del prefijo.
+Las métricas de caché que devuelve la API quedan en `last_usage`. No se comprueba la longitud mínima cacheable del
+proveedor: un prefijo demasiado corto simplemente no se cachea. La caché de respuestas incluye ahora en su clave el
+presupuesto, la colocación, el umbral, el tipo de LLM y su modelo, para no servir respuestas de otra configuración.
+
+**Verificación.** Pruebas unitarias en `tests/test_context_budget.py`, `tests/test_reranker_guard.py`,
+`tests/test_llm_request.py` y `tests/test_memory.py` (consistencia de versiones, job obsoleto, claim de zombi, reintentos,
+cola acotada, recuperación tras reinicio, aislamiento por tenant y borrado). Ninguna prueba llama a un proveedor externo.
+
+**Pendiente (no implementado en esta versión).**
+- El almacén de memoria **no está conectado a `/query`**: no hay `conversation_id` en la API y las memorias relevantes no
+  se inyectan en el prompt. Está probado en aislamiento, no integrado en el flujo de petición.
+- Evaluación con RAGAS/TruLens: no integrada. Requiere un juez LLM y datos de referencia; no se han medido métricas.
+- Reranker BGE: el adaptador existe (`CrossEncoderReranker`) pero no tiene prueba contra un modelo real.
+- Compresión contextual dentro de un padre: no implementada. Un padre que no cabe se omite, no se recorta.
+- Tamaños por defecto de chunking (1024/256 tokens) distintos de los propuestos (≈2000/400): cambiarlos altera el índice y
+  las líneas base de evaluación; queda como decisión medible, no hecha.
+- Resumen con LLM: no implementado; solo el extractivo.
+- Cumplimiento de mypy estricto en el código anterior: quedan errores heredados en `chunking`, `pipeline`, `audit`,
+  `config` y `text`. Los módulos nuevos pasan mypy sin errores.

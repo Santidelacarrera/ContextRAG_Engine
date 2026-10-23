@@ -78,6 +78,10 @@ def from_env() -> ContextRAG:
                                         min_score=_opt_float(env("RERANK_MIN_SCORE")))
     else:
         reranker = LexicalReranker()
+    if rer != "lexical":  # remote or model-backed rerankers get a hard timeout; the offline one is in-process
+        from .retrieval.reranker import BoundedReranker
+
+        reranker = BoundedReranker(reranker, cfg.reranker_timeout_seconds)
 
     if env("NLI", "lexical") == "deberta":
         from .verification.nli_verifier import DebertaNLI

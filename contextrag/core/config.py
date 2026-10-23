@@ -22,6 +22,20 @@ class Settings:
     max_attempts: int = 2  # generation attempts before the deterministic fallback
     # caching
     cache_ttl_seconds: int = 3600
+    # evidence budget (tokens, same unit as the chunker): the passages handed to the LLM never exceed it
+    context_budget_tokens: int = 4096  # == top_k * parent_tokens at the defaults: no behaviour change
+    context_safety_margin: float = 0.10  # fraction of the budget held back for tokenizer estimation error
+    context_dedupe_jaccard: float = 0.8  # parents this similar to a better-ranked one are dropped
+    context_placement: str = "edges"  # edges: best first and second-best last; descending: best first
+    # reranking
+    reranker_timeout_seconds: float = 10.0  # a reranker call that exceeds this fails the request (never guessed)
+    # conversational memory
+    memory_compact_threshold_tokens: int = 2000  # uncompacted history above this schedules a compaction
+    memory_keep_recent_turns: int = 6  # the most recent turns are never compacted
+    memory_workers: int = 2  # bounded summarization concurrency
+    memory_queue_limit: int = 64  # pending compaction jobs; beyond this, scheduling is refused
+    memory_job_max_attempts: int = 3
+    memory_lease_seconds: int = 300  # a running job not finished within this is considered abandoned
 
     def __post_init__(self):
         # The decision gate: a threshold of 0 (or NaN, or >1) would silently disable -- or make unreachable -- the
@@ -32,6 +46,22 @@ class Settings:
             raise ValueError("max_attempts must be >= 1")
         if self.child_tokens > self.parent_tokens or self.child_overlap_tokens >= self.child_tokens:
             raise ValueError("require child_overlap_tokens < child_tokens <= parent_tokens")
+        if self.context_budget_tokens < 1:
+            raise ValueError("context_budget_tokens must be >= 1")
+        if not (0.0 <= self.context_safety_margin < 1.0):
+            raise ValueError("context_safety_margin must be in [0, 1)")
+        if not (0.0 < self.context_dedupe_jaccard <= 1.0):
+            raise ValueError("context_dedupe_jaccard must be in (0, 1]")
+        if self.context_placement not in ("edges", "descending"):
+            raise ValueError("context_placement must be 'edges' or 'descending'")
+        if self.reranker_timeout_seconds <= 0:
+            raise ValueError("reranker_timeout_seconds must be > 0")
+        if self.memory_keep_recent_turns < 0 or self.memory_compact_threshold_tokens < 1:
+            raise ValueError("memory thresholds must be positive (keep_recent_turns may be 0)")
+        if self.memory_workers < 1 or self.memory_queue_limit < 1 or self.memory_job_max_attempts < 1:
+            raise ValueError("memory worker, queue and attempt limits must be >= 1")
+        if self.memory_lease_seconds <= 0:
+            raise ValueError("memory_lease_seconds must be > 0")
 
     @classmethod
     def from_env(cls, prefix: str = "CONTEXTRAG_") -> "Settings":
