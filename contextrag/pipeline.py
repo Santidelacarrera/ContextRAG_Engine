@@ -82,10 +82,15 @@ class ContextRAG:
             self._stats[key] += n
 
     def metrics_text(self) -> str:
-        """Prometheus text exposition of in-process counters."""
+        """Prometheus text exposition: the in-process counters, then the compaction worker's registry if one runs."""
         with self._stats_lock:
             items = sorted(self._stats.items())
-        return "".join(f"contextrag_{k} {v:g}\n" for k, v in items)
+        text = "".join(f"contextrag_{k} {v:g}\n" for k, v in items)
+        if self.compactor is not None:
+            from prometheus_client import generate_latest
+
+            text += generate_latest(self.compactor.metrics.registry).decode()
+        return text
 
     def erase_tenant(self, tenant: str, *, include_audit: bool = True) -> dict[str, int]:
         """Right-to-erasure: remove ALL of a tenant's documents, vectors, BM25 entries, cached answers and (unless

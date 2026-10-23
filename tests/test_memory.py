@@ -1,6 +1,7 @@
 """Conversational memory: versioned turns, idempotent and restart-safe compaction, bounded scheduling."""
 import pytest
 
+from contextrag.core.security import TenantCipher
 from contextrag.memory.store import (ConversationNotFound, ConversationStore, MemoryDraft, QueueFull,
                                      VersionConflict)
 from contextrag.memory.summarizer import ExtractiveSummarizer
@@ -15,7 +16,11 @@ class Clock:
         return self.t
 
 
+KEY = b"0123456789abcdef0123456789abcdef"  # test-only master key
+
+
 def store(path=":memory:", clock=None, **kw):
+    kw.setdefault("cipher", TenantCipher(KEY))
     return ConversationStore(path, clock=clock or Clock(), **kw)
 
 

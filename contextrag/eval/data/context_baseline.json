@@ -3,7 +3,7 @@
   "settings": "defaults (chunking 1024/256, budget 4096, placement descending)",
   "metrics": {
     "mean_recall": 1.0,
-    "mean_average_precision": 0.7546
+    "mean_average_precision": 0.7854
   },
-  "note": "Synthetic, lexical, deterministic. A drop below these values is a regression on this corpus; it is not evidence about real documents or about answer quality."
+  "note": "Synthetic, lexical, deterministic. A drop below these values is a regression on this corpus; it is not evidence about real documents or about answer quality. Re-measured when exact ties were moved from chunk-id order (a hash that includes the tenant: AP then varied with the tenant name, 0.7346-0.7623) to document position (tenant-invariant). The previous value 0.7546 was an artifact of the id order. Average precision is sensitive to how ties are broken, so differences below ~0.03 on this corpus are not signal."
 }

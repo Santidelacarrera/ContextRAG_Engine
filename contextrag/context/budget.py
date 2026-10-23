@@ -88,7 +88,7 @@ def assemble_evidence(
     if not (0.0 < dedupe_threshold <= 1.0):
         raise ValueError("dedupe_threshold must be in (0, 1]")
 
-    ranked = sorted(candidates, key=lambda c: (-c.score, c.parent.id))
+    ranked = sorted(candidates, key=lambda c: (-c.score, c.parent.doc_id, c.parent.start))  # position, not id
     limit = budget.effective_tokens
     selected: list[Context] = []
     kept_token_sets: list[set[str]] = []

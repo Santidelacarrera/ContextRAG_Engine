@@ -371,15 +371,61 @@ presupuesto, la colocación, el umbral, el tipo de LLM y su modelo, para no serv
 `tests/test_llm_request.py` y `tests/test_memory.py` (consistencia de versiones, job obsoleto, claim de zombi, reintentos,
 cola acotada, recuperación tras reinicio, aislamiento por tenant y borrado). Ninguna prueba llama a un proveedor externo.
 
+**Cifrado de la memoria conversacional.** Turnos y memorias se cifran con la clave del tenant derivada de `MASTER_KEY`
+(el mismo esquema que el texto de los chunks). Cada valor cifrado va ligado a su posición (`turn:<conversación>:<seq>` o
+`memory:<conversación>:<id>`), así que una fila copiada o movida dentro de la misma conversación no se acepta. Las lecturas
+fallan cerrado (`MemoryIntegrityError`): clave incorrecta, otro tenant, manipulación, formato inválido o una fila en claro
+leída por una tienda que cifra. No hay vuelta atrás a texto plano ni a la clave de otro tenant. Los identificadores,
+roles, números de turno, estados de trabajo y códigos de error siguen en claro: son necesarios para el orden y la retención.
+*Migración:* las filas anteriores al cifrado (`encrypted = 0`) no se leen hasta ejecutar `python -m contextrag memory-migrate`
+(idempotente: un segundo pase no cambia nada). Tras cifrar hace `wal_checkpoint(TRUNCATE)` y `VACUUM`, y el modo
+`secure_delete` pone a cero las páginas liberadas. Verificado en un fichero SQLite real: 2 turnos y 1 memoria cifrados,
+segundo pase sin cambios, el marcador en claro ya no aparece en el fichero. **No implementado:** rotación de `MASTER_KEY`
+(exige volver a cifrar con la clave nueva; hoy no hay herramienta para ello).
+
+**Métricas del worker de compactación** (Prometheus, en `/metrics`; registro propio, sin etiquetas): 
+`contextrag_memory_queue_depth` (gauge, trabajos en cola o en curso según la tienda), 
+`contextrag_memory_compaction_duration_seconds` (histograma, reloj monótono, cada intento que reclamó un trabajo),
+`contextrag_memory_compaction_jobs_served_total` (trabajos cuyo commit se hizo), 
+`contextrag_memory_compaction_jobs_failed_total` (fallos terminales: se agotaron los intentos),
+`contextrag_memory_compaction_retries_total` (intentos fallidos que se reencolan) y
+`contextrag_memory_compaction_cancelled_total` (trabajos encolados cancelados al cerrar; quedan en la tienda y
+`recover()` los reanuda). Un intento que se reintenta no cuenta como fallo terminal. Requiere el extra `memory`
+(`prometheus-client`).
+
+**Calibración (`python -m contextrag calibrate`).** Rejilla de chunks parent {1024, 2000} × child {256, 400}, umbral
+`RERANK_MIN_SCORE` por precisión-recall y umbral NLI por frase. La política de chunks prioriza el recall (ningún candidato
+puede perder recall frente al mejor) y después la precisión media. Cada sección lleva su estado: `computed` o
+`insufficient_data` (menos de 50 casos por clase). El informe es JSON; `--proposal` escribe candidatos en una ruta
+explícita para revisar y no toca `.env` ni los valores por defecto. **Resultado en el corpus sintético (verificado,
+reproducible con semilla 7):** la rejilla recomienda 1024/256 (recall 1.000, precisión media 0.785). 2000/256 tiene
+precisión media 0.870 pero recall 0.944 (un caso de 18 perdido). `RERANK_MIN_SCORE` y el umbral NLI quedan en
+`insufficient_data`: no hay suficientes etiquetas.
+
+**Hallazgo de esta revisión.** Los empates en el ranking se desempataban por el id de chunk, un hash que incluye el tenant.
+La precisión media dependía del nombre del tenant (0.7346 a 0.7623 según el nombre). Ahora los empates se resuelven por
+posición en el documento (RRF, BM25 y presupuesto de evidencia) y el valor es idéntico para cualquier tenant. Eso cambió
+la línea base de 0.7546 a 0.7854 sin cambiar la configuración recomendada. La precisión media es sensible al desempate:
+diferencias menores de ~0.03 en este corpus no son señal.
+
+**RAGAS (`python -m contextrag ragas`).** Faithfulness (contra los párrafos padre completos), answer relevancy (necesita
+embeddings de OpenAI; sin ellos queda *not run*, nunca 0) y context recall (frente a la respuesta de referencia). Concurrencia
+acotada, tiempo de espera y reintentos por llamada, y un informe donde cada par caso-métrica es *scored*, *failed* o
+*not run*. La media solo cuenta los puntuados. Código de salida 1 si alguna llamada al juez falló.
+**Verificado sin proveedor:** la configuración se valida; `RagasScorer` construye las tres métricas con un cliente
+Anthropic y un modelo de embeddings sin llamar a la red; la orquestación se prueba con un juez simulado (fallos, reintentos,
+timeouts, concurrencia, valores fuera de rango). **No verificado:** cualquier puntuación real del juez. El test en vivo
+(`RAGAS_INTEGRATION=1`) está escrito y omitido porque no hay claves ni acceso a los proveedores en este entorno. Con el
+paquete `ragas` 0.4.3 hace falta `langchain-community<0.4`; el extra `ragas` lo fija.
+
 **Pendiente (no implementado o no verificado).**
-- **RAGAS / TruLens (faithfulness, relevancia de la respuesta, precisión con juez):** no ejecutado. Necesita un LLM juez.
+- **Puntuaciones reales del juez RAGAS:** no ejecutadas (sin claves ni red a los proveedores).
+- **Calibración sobre documentos reales:** no hay documentos de validación con etiquetas en el repositorio. Los resultados
+  son sintéticos. Ningún valor de producción (tamaños de chunk, `RERANK_MIN_SCORE`, umbral NLI) puede darse por validado.
 - **Reranker BGE:** el adaptador `CrossEncoderReranker` existe, pero no se ha verificado contra un modelo real: en el
   entorno de desarrollo `torch`, `sentence-transformers` y el host de Hugging Face no estaban disponibles.
 - **Adaptador Cohere:** la validación de la respuesta está probada con un cliente simulado; no contra la API real.
-- **Caché de prompts de Anthropic:** la forma de la petición está probada; el efecto real (aciertos de caché y longitud
-  mínima cacheable) no se ha medido contra la API.
-- **Memoria:** el resumen es solo extractivo; no hay caducidad (`expires_at`) ni redacción de datos personales en los turnos.
-  Los turnos se guardan en claro en el SQLite de `MEMORY_DB`; protegerlo es responsabilidad del despliegue.
-- **Tamaños de chunking:** los propuestos (≈2000/400) no se adoptaron: en el corpus sintético pierden recall. Una decisión
-  definitiva requiere documentos reales.
-- **Métricas de operación de la memoria** (profundidad de cola, latencia de compactación): no expuestas en `/metrics`.
+- **Caché de prompts de Anthropic:** la forma de la petición está probada; el efecto real no se ha medido contra la API.
+- **Memoria:** el resumen es solo extractivo; no hay caducidad (`expires_at`) ni redacción de datos personales, ni
+  rotación de `MASTER_KEY`.
+- **Métricas de operación de la memoria:** cubiertas arriba; no hay alertas ni paneles.

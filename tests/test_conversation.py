@@ -7,6 +7,7 @@ from contextrag import factory
 from contextrag.api.server import create_app
 from contextrag.core.config import Settings
 from contextrag.generation.llm import ExtractiveLLM, build_prompt
+from contextrag.core.security import TenantCipher
 from contextrag.memory.store import ConversationNotFound, ConversationStore
 from contextrag.memory.summarizer import ExtractiveSummarizer
 from contextrag.memory.worker import CompactionWorker
@@ -29,7 +30,7 @@ class Recording:
 def conversational_rag(settings=None):
     rag = factory.offline(settings=settings)
     rag.ingestor.ingest_text(POLICY, tenant="acme", doc_id="policy.md")
-    rag.memory = ConversationStore(":memory:")
+    rag.memory = ConversationStore(":memory:", cipher=TenantCipher(b"0123456789abcdef0123456789abcdef"))
     rag.compactor = CompactionWorker(rag.memory, ExtractiveSummarizer(), workers=1)
     rag.llm = Recording()
     return rag
@@ -101,7 +102,7 @@ def test_a_user_decision_is_compacted_into_memory_and_recalled_later():
 
 def test_a_full_compaction_queue_never_fails_the_request():
     rag = conversational_rag(Settings(memory_compact_threshold_tokens=1, memory_keep_recent_turns=0))
-    rag.memory = ConversationStore(":memory:", queue_limit=1)
+    rag.memory = ConversationStore(":memory:", queue_limit=1, cipher=TenantCipher(b"0123456789abcdef0123456789abcdef"))
     rag.compactor = CompactionWorker(rag.memory, ExtractiveSummarizer(), workers=1)
     try:
         rag.memory.create_conversation("acme", "filler")

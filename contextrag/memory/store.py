@@ -13,9 +13,25 @@ Consistency model
   and cannot insert memories twice. Turns newer than ``through_seq`` are untouched.
 * Source turns are never deleted by compaction. They remain the provenance of every memory (``source_from`` to
   ``source_to``). Deletion happens only through :meth:`delete_conversation`, for erasure.
+
+Encryption at rest
+------------------
+* Turn and memory text is sealed with the tenant's key from :class:`~contextrag.core.security.TenantCipher` (the same
+  ``MASTER_KEY`` scheme that protects chunk text). A store cannot be built without a cipher unless the caller passes
+  ``plaintext=True`` explicitly (development and tests only).
+* Each sealed value is bound to its position: the plaintext carries a label (``turn:<conversation>:<seq>`` or
+  ``memory:<conversation>:<memory_id>``) that is checked on read. A row moved or copied to another position therefore
+  fails authentication even if it is still the same tenant's ciphertext.
+* Reads fail closed with :class:`MemoryIntegrityError`: wrong key, another tenant's record, tampering, malformed data,
+  or an unencrypted row read by an encrypting store (a legacy row that still needs :meth:`migrate_plaintext`). There is
+  no fallback to plaintext and no fallback to another tenant's key.
+* The ``encrypted`` column records each row's format. Rows written before encryption existed default to ``0``.
+* Ids, roles, seq numbers, timestamps, job states and error codes stay in the clear: they are needed for ordering,
+  consistency and retention, and they carry no conversation content.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 import time
@@ -26,11 +42,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..core.chunking import count_tokens
+from ..core.security import TenantCipher
 
 ROLES = ("user", "assistant")
 MEMORY_ORIGINS = ("user_stated", "model_inferred")
 JOB_STATES = ("queued", "running", "done", "failed")
 MAX_TURN_CHARS = 20_000
+MIGRATION_BATCH = 200
 
 
 class ConversationNotFound(LookupError):
@@ -47,6 +65,13 @@ class VersionConflict(RuntimeError):
 
 class QueueFull(RuntimeError):
     """Too many compaction jobs are pending; scheduling is refused rather than queued without bound."""
+
+
+class MemoryIntegrityError(RuntimeError):
+    """A stored conversation record cannot be decrypted, authenticated, or matched to its position. Reads fail closed.
+
+    The message names the record's position, never its content or the key material.
+    """
 
 
 @dataclass(frozen=True)
@@ -95,11 +120,13 @@ CREATE TABLE IF NOT EXISTS conversations (
 CREATE TABLE IF NOT EXISTS turns (
     tenant TEXT NOT NULL, conversation_id TEXT NOT NULL, seq INTEGER NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
-    content TEXT NOT NULL, created_at REAL NOT NULL,
+    content TEXT NOT NULL, encrypted INTEGER NOT NULL DEFAULT 0 CHECK (encrypted IN (0, 1)),
+    created_at REAL NOT NULL,
     PRIMARY KEY (tenant, conversation_id, seq));
 CREATE TABLE IF NOT EXISTS memories (
     memory_id TEXT PRIMARY KEY, tenant TEXT NOT NULL, conversation_id TEXT NOT NULL,
     memory_type TEXT NOT NULL, content TEXT NOT NULL,
+    encrypted INTEGER NOT NULL DEFAULT 0 CHECK (encrypted IN (0, 1)),
     origin TEXT NOT NULL CHECK (origin IN ('user_stated', 'model_inferred')),
     confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
     source_from INTEGER NOT NULL, source_to INTEGER NOT NULL,
@@ -116,19 +143,37 @@ CREATE INDEX IF NOT EXISTS jobs_state ON compaction_jobs (state);
 
 
 class ConversationStore:
-    def __init__(self, path: str | Path = ":memory:", *, max_attempts: int = 3, queue_limit: int = 64,
-                 clock: Callable[[], float] = time.time):
+    def __init__(self, path: str | Path = ":memory:", *, cipher: TenantCipher | None = None, plaintext: bool = False,
+                 max_attempts: int = 3, queue_limit: int = 64, clock: Callable[[], float] = time.time):
+        if cipher is None and not plaintext:
+            raise ValueError("conversation memory requires a TenantCipher (MASTER_KEY); plaintext=True is only for "
+                             "development and tests")
+        if cipher is not None and plaintext:
+            raise ValueError("cipher and plaintext=True are mutually exclusive")
         if max_attempts < 1 or queue_limit < 1:
             raise ValueError("max_attempts and queue_limit must be >= 1")
+        self._cipher = cipher
         self._path = str(path)
         self._max_attempts, self._queue_limit, self._clock = max_attempts, queue_limit, clock
         self._lock = threading.RLock()
         self._db = sqlite3.connect(self._path, isolation_level=None, check_same_thread=False, timeout=30)
         self._db.execute("PRAGMA foreign_keys = ON")
         self._db.execute("PRAGMA busy_timeout = 30000")
+        # Overwritten and freed pages are zeroed, so a plaintext value replaced by migration does not linger in the file.
+        self._db.execute("PRAGMA secure_delete = ON")
         if self._path != ":memory:":
             self._db.execute("PRAGMA journal_mode = WAL")  # durable across restarts, readers do not block writers
         self._db.executescript(_SCHEMA)
+        with self._tx() as db:  # databases created before encryption gain the flag; existing rows read as plaintext
+            for table in ("turns", "memories"):
+                cols = {r[1] for r in db.execute(f"PRAGMA table_info({table})").fetchall()}
+                if "encrypted" not in cols:
+                    db.execute(f"ALTER TABLE {table} ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0 "
+                               "CHECK (encrypted IN (0, 1))")
+
+    @property
+    def encrypted(self) -> bool:
+        return self._cipher is not None
 
     def close(self) -> None:
         with self._lock:
@@ -144,6 +189,32 @@ class ConversationStore:
                 self._db.execute("ROLLBACK")
                 raise
             self._db.execute("COMMIT")
+
+    # -- sealing ----------------------------------------------------------------------------------------
+    def _store_text(self, tenant: str, label: str, text: str) -> tuple[str, int]:
+        """Value and ``encrypted`` flag to persist for ``text``."""
+        if self._cipher is None:
+            return text, 0
+        _require_tenant(tenant)
+        envelope = json.dumps({"aad": label, "text": text}, ensure_ascii=False, separators=(",", ":"))
+        return self._cipher.encrypt(tenant, envelope), 1
+
+    def _load_text(self, tenant: str, label: str, stored: str, encrypted: int) -> str:
+        """Plaintext of a stored value. Raises :class:`MemoryIntegrityError` rather than returning anything unverified."""
+        if not encrypted:
+            if self._cipher is not None:
+                raise MemoryIntegrityError(f"{label}: stored unencrypted; run `contextrag memory-migrate` first")
+            return stored
+        if self._cipher is None:
+            raise MemoryIntegrityError(f"{label}: encrypted record, but no cipher is configured")
+        _require_tenant(tenant)
+        try:
+            envelope = json.loads(self._cipher.decrypt(tenant, stored))
+        except Exception:  # wrong key, tampering, truncation, not JSON: all the same to the caller, all refused
+            envelope = None
+        if not isinstance(envelope, dict) or envelope.get("aad") != label or not isinstance(envelope.get("text"), str):
+            raise MemoryIntegrityError(f"{label}: record failed authentication or does not belong to this position")
+        return envelope["text"]
 
     # -- conversations and turns ----------------------------------------------------------------------
     def create_conversation(self, tenant: str, conversation_id: str) -> None:
@@ -172,8 +243,10 @@ class ConversationStore:
             if expected_version is not None and expected_version != current:
                 raise VersionConflict(expected_version, current)
             seq = current + 1
-            db.execute("INSERT INTO turns (tenant, conversation_id, seq, role, content, created_at) "
-                       "VALUES (?, ?, ?, ?, ?, ?)", (tenant, conversation_id, seq, role, content, self._clock()))
+            stored, encrypted = self._store_text(tenant, _label("turn", conversation_id, seq), content)
+            db.execute("INSERT INTO turns (tenant, conversation_id, seq, role, content, encrypted, created_at) "
+                       "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       (tenant, conversation_id, seq, role, stored, encrypted, self._clock()))
             db.execute("UPDATE conversations SET version = ? WHERE tenant = ? AND conversation_id = ?",
                        (seq, tenant, conversation_id))
         return seq
@@ -181,26 +254,28 @@ class ConversationStore:
     def turns_between(self, tenant: str, conversation_id: str, after_seq: int, through_seq: int) -> list[Turn]:
         with self._lock:
             rows = self._db.execute(
-                "SELECT seq, role, content FROM turns WHERE tenant = ? AND conversation_id = ? "
+                "SELECT seq, role, content, encrypted FROM turns WHERE tenant = ? AND conversation_id = ? "
                 "AND seq > ? AND seq <= ? ORDER BY seq", (tenant, conversation_id, after_seq, through_seq)).fetchall()
-        return [Turn(*r) for r in rows]
+        return [self._turn(tenant, conversation_id, r) for r in rows]
 
     def history_window(self, tenant: str, conversation_id: str, token_budget: int,
                        token_fn: Callable[[str], int] = count_tokens) -> list[Turn]:
-        """The newest turns that fit ``token_budget``, returned in chronological order."""
+        """The newest turns that fit ``token_budget``, returned in chronological order. Only the turns that are
+        admitted are decrypted."""
         if token_budget < 0:
             raise ValueError("token_budget must be >= 0")
         with self._lock:
             rows = self._db.execute(
-                "SELECT seq, role, content FROM turns WHERE tenant = ? AND conversation_id = ? ORDER BY seq DESC",
-                (tenant, conversation_id)).fetchall()
+                "SELECT seq, role, content, encrypted FROM turns WHERE tenant = ? AND conversation_id = ? "
+                "ORDER BY seq DESC", (tenant, conversation_id)).fetchall()
         chosen: list[Turn] = []
         used = 0
         for row in rows:
-            cost = token_fn(row[2])
+            turn = self._turn(tenant, conversation_id, row)
+            cost = token_fn(turn.content)
             if used + cost > token_budget:
                 break  # newest-first: stop at the first turn that does not fit, keeping the window contiguous
-            chosen.append(Turn(*row))
+            chosen.append(turn)
             used += cost
         return list(reversed(chosen))
 
@@ -209,6 +284,10 @@ class ConversationStore:
         conv = self._conversation(tenant, conversation_id)
         return sum(token_fn(t.content) for t in self.turns_between(tenant, conversation_id,
                                                                    conv["compacted_through"], conv["version"]))
+
+    def _turn(self, tenant: str, conversation_id: str, row: tuple) -> Turn:
+        seq, role, stored, encrypted = row  # the label binds the text to its seq: swapped rows fail authentication
+        return Turn(seq, role, self._load_text(tenant, _label("turn", conversation_id, seq), stored, encrypted))
 
     # -- compaction jobs ------------------------------------------------------------------------------
     def plan_compaction(self, tenant: str, conversation_id: str, *, threshold_tokens: int, keep_recent_turns: int,
@@ -251,7 +330,8 @@ class ConversationStore:
         return ClaimedJob(job_id, tenant, cid, through, attempts + 1)
 
     def job_turns(self, claim: ClaimedJob) -> list[Turn]:
-        """The turns a claimed job must summarize: ``(compacted_through, through_seq]`` as committed right now."""
+        """The turns a claimed job must summarize, decrypted for the summarizer: ``(compacted_through, through_seq]``
+        as committed right now. The plaintext lives in memory only for the duration of the attempt."""
         conv = self._conversation(claim.tenant, claim.conversation_id)
         return self.turns_between(claim.tenant, claim.conversation_id, conv["compacted_through"], claim.through_seq)
 
@@ -278,10 +358,13 @@ class ConversationStore:
             for d in drafts:
                 if not (lo < d.source_seq <= hi):
                     raise ValueError(f"memory source {d.source_seq} is outside the job range ({lo}, {hi}]")
-                db.execute("INSERT INTO memories (memory_id, tenant, conversation_id, memory_type, content, origin, "
-                           "confidence, source_from, source_to, job_id, created_at) "
-                           "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                           (str(uuid.uuid4()), claim.tenant, claim.conversation_id, d.memory_type, d.content,
+                memory_id = str(uuid.uuid4())
+                stored, encrypted = self._store_text(claim.tenant, _label("memory", claim.conversation_id, memory_id),
+                                                     d.content)
+                db.execute("INSERT INTO memories (memory_id, tenant, conversation_id, memory_type, content, encrypted, "
+                           "origin, confidence, source_from, source_to, job_id, created_at) "
+                           "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                           (memory_id, claim.tenant, claim.conversation_id, d.memory_type, stored, encrypted,
                             d.origin, d.confidence, d.source_seq, d.source_seq, claim.job_id, self._clock()))
             db.execute("UPDATE conversations SET compacted_through = ? WHERE tenant = ? AND conversation_id = ?",
                        (hi, claim.tenant, claim.conversation_id))
@@ -320,14 +403,29 @@ class ConversationStore:
             return [r[0] for r in self._db.execute(
                 "SELECT job_id FROM compaction_jobs WHERE state IN ('queued', 'running')").fetchall()]
 
+    def count_active(self) -> int:
+        with self._lock:
+            return int(self._db.execute(
+                "SELECT COUNT(*) FROM compaction_jobs WHERE state IN ('queued', 'running')").fetchone()[0])
+
+    def queued_jobs(self) -> list[str]:
+        """Jobs waiting for a worker. After a shutdown these are not running anywhere, so they must be resubmitted."""
+        with self._lock:
+            return [r[0] for r in self._db.execute(
+                "SELECT job_id FROM compaction_jobs WHERE state = 'queued' ORDER BY created_at, job_id").fetchall()]
+
     # -- memories -------------------------------------------------------------------------------------
     def memories(self, tenant: str, conversation_id: str) -> list[Memory]:
         with self._lock:
             rows = self._db.execute(
-                "SELECT memory_id, memory_type, content, origin, confidence, source_from, source_to FROM memories "
-                "WHERE tenant = ? AND conversation_id = ? ORDER BY source_from, memory_id",
+                "SELECT memory_id, memory_type, content, encrypted, origin, confidence, source_from, source_to "
+                "FROM memories WHERE tenant = ? AND conversation_id = ? ORDER BY source_from, memory_id",
                 (tenant, conversation_id)).fetchall()
-        return [Memory(*r) for r in rows]
+        out = []
+        for memory_id, memory_type, stored, encrypted, origin, confidence, src_from, src_to in rows:
+            content = self._load_text(tenant, _label("memory", conversation_id, memory_id), stored, encrypted)
+            out.append(Memory(memory_id, memory_type, content, origin, confidence, src_from, src_to))
+        return out
 
     def relevant_memories(self, tenant: str, conversation_id: str, query: str, k: int,
                           score: Callable[[str, str], float]) -> list[Memory]:
@@ -346,6 +444,39 @@ class ConversationStore:
                 db.execute(f"DELETE FROM {table} WHERE tenant = ? AND conversation_id = ?", (tenant, conversation_id))
             db.execute("DELETE FROM conversations WHERE tenant = ? AND conversation_id = ?", (tenant, conversation_id))
 
+    # -- migration of legacy plaintext ---------------------------------------------------------------
+    def migrate_plaintext(self, *, batch_size: int = MIGRATION_BATCH) -> dict[str, int]:
+        """Encrypt rows written before encryption existed (``encrypted = 0``), in place.
+
+        Idempotent and resumable: each batch is one transaction over the rows still flagged ``encrypted = 0``, so a
+        run that is interrupted resumes where it stopped and a completed run is a no-op. Afterwards the file is
+        checkpointed and vacuumed, so the plaintext pages are not left behind in the WAL or the free list.
+        Returns the number of rows encrypted per table.
+        """
+        if self._cipher is None:
+            raise RuntimeError("migration needs a TenantCipher (MASTER_KEY)")
+        if batch_size < 1:
+            raise ValueError("batch_size must be >= 1")
+        counts = {"turns": 0, "memories": 0}
+        for table, key_cols in (("turns", "seq"), ("memories", "memory_id")):
+            kind = "turn" if table == "turns" else "memory"
+            while True:
+                with self._tx() as db:
+                    rows = db.execute(
+                        f"SELECT rowid, tenant, conversation_id, {key_cols}, content FROM {table} "
+                        "WHERE encrypted = 0 ORDER BY rowid LIMIT ?", (batch_size,)).fetchall()
+                    if not rows:
+                        break
+                    for rowid, tenant, cid, ident, content in rows:
+                        stored, _ = self._store_text(tenant, _label(kind, cid, ident), content)
+                        db.execute(f"UPDATE {table} SET content = ?, encrypted = 1 WHERE rowid = ?", (stored, rowid))
+                    counts[table] += len(rows)
+        if sum(counts.values()):
+            with self._lock:
+                self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                self._db.execute("VACUUM")
+        return counts
+
     def _conversation(self, tenant: str, conversation_id: str) -> dict:
         with self._lock:
             row = self._db.execute("SELECT version, compacted_through FROM conversations WHERE tenant = ? "
@@ -355,10 +486,19 @@ class ConversationStore:
         return {"version": row[0], "compacted_through": row[1]}
 
 
+def _label(kind: str, conversation_id: str, ident: object) -> str:
+    return f"{kind}:{conversation_id}:{ident}"
+
+
+def _require_tenant(tenant: str) -> None:
+    if not tenant:
+        raise ValueError("tenant is required for encrypted conversation records")
+
+
 def _require_id(value: str, name: str) -> None:
     if not value or len(value) > 128 or not all(c.isalnum() or c in "-_.:" for c in value):
         raise ValueError(f"{name} must be 1..128 characters of letters, digits, '-', '_', '.' or ':'")
 
 
-__all__ = ["ConversationStore", "ConversationNotFound", "VersionConflict", "QueueFull", "Turn", "Memory",
-           "MemoryDraft", "ClaimedJob"]
+__all__ = ["ConversationStore", "ConversationNotFound", "VersionConflict", "QueueFull", "MemoryIntegrityError",
+           "Turn", "Memory", "MemoryDraft", "ClaimedJob"]
