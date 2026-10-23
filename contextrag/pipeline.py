@@ -12,6 +12,7 @@ from .audit import AuditLog, record_of
 from .core.cache import Cache
 from .core.config import Settings
 from .core.ingestion import Ingestor
+from .context.budget import ContextBudget, assemble_evidence
 from .core.models import Answer, Status
 from .generation.llm import LLM, NO_ANSWER, GenerationError
 from .retrieval.hybrid_search import HybridIndex, HybridRetriever
@@ -31,6 +32,7 @@ class ContextRAG:
         self.ingestor = Ingestor(index, embedder, self.cfg, cache)
         self.retriever = HybridRetriever(index, embedder, reranker, self.cfg)
         self.verifier = NLIVerifier(nli, self.cfg.verification_threshold)
+        self.budget = ContextBudget(self.cfg.context_budget_tokens, self.cfg.context_safety_margin)
         self._stats: Counter = Counter()
         self._stats_lock = threading.Lock()
 
@@ -95,7 +97,12 @@ class ContextRAG:
         if not self.cache:
             return None
         epoch = self.cache.get(f"epoch:{tenant}") or "0"
-        raw = json.dumps([tenant, epoch, sorted(groups), question, top_k, self.cfg.verification_threshold])
+        # Everything that changes the answer is part of the key: a cached answer built with another budget,
+        # placement, verifier threshold or generator must not be served as if it were current.
+        fingerprint = [self.cfg.verification_threshold, self.cfg.context_budget_tokens, self.cfg.context_safety_margin,
+                       self.cfg.context_dedupe_jaccard, self.cfg.context_placement, type(self.llm).__name__,
+                       getattr(self.llm, "model", None)]
+        raw = json.dumps([tenant, epoch, sorted(groups), question, top_k, fingerprint])
         return "ans:" + hashlib.sha256(raw.encode()).hexdigest()
 
     def _cached(self, question, tenant, groups, top_k) -> Answer | None:
@@ -114,9 +121,13 @@ class ContextRAG:
 
     # -- core loop --------------------------------------------------------------------------
     def _answer(self, question, tenant, groups, top_k) -> Answer:
-        contexts = self.retriever.retrieve(question, tenant, groups, top_k)
-        if not contexts:
+        retrieved = self.retriever.retrieve(question, tenant, groups, top_k)
+        if not retrieved:
             return self._fallback(question, [], [], 0, "no relevant context retrieved")
+        contexts = assemble_evidence(retrieved, self.budget, dedupe_threshold=self.cfg.context_dedupe_jaccard,
+                                     placement=self.cfg.context_placement)
+        if not contexts:
+            return self._fallback(question, [], [], 0, "retrieved context does not fit the evidence budget")
 
         feedback, attempts, verdicts = None, 0, []
         for attempts in range(1, self.cfg.max_attempts + 1):

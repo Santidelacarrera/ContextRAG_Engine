@@ -68,19 +68,36 @@ class ExtractiveLLM:
         return " ".join(f"{s.rstrip('.')}. [{i}]" for (s, i), _ in top)
 
 
+def anthropic_request(model: str, max_tokens: int, question: str, contexts: Sequence[Context],
+                      feedback: str | None, *, prompt_cache: bool) -> dict:
+    """Messages API arguments. The stable instructions are the cacheable prefix; the passages, question and feedback
+    are per-request and stay in the user turn, outside that prefix. Whether the prefix is actually cached depends on
+    the provider's minimum cacheable length, which this code does not check: a too-short prefix is simply not cached."""
+    system: str | list[dict] = SYSTEM_PROMPT
+    if prompt_cache:
+        system = [{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}]
+    return {
+        "model": model, "max_tokens": max_tokens, "temperature": 0, "system": system,
+        "messages": [{"role": "user", "content": build_prompt(question, contexts, feedback)}],
+    }
+
+
 class AnthropicLLM:
-    def __init__(self, model: str | None = None, max_tokens: int = 1024):
+    def __init__(self, model: str | None = None, max_tokens: int = 1024, *, prompt_cache: bool = True):
         import anthropic
 
         self._c = anthropic.Anthropic()
         self.model = model or os.getenv("CONTEXTRAG_LLM_MODEL", "claude-sonnet-5-5")
         self.max_tokens = max_tokens
+        self.prompt_cache = prompt_cache
+        self.last_usage: dict[str, int] = {}  # cache read/creation counts reported by the API, for metrics
 
     def generate(self, question, contexts, feedback=None):
-        r = self._c.messages.create(
-            model=self.model, max_tokens=self.max_tokens, temperature=0, system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": build_prompt(question, contexts, feedback)}],
-        )
+        r = self._c.messages.create(**anthropic_request(self.model, self.max_tokens, question, contexts, feedback,
+                                                        prompt_cache=self.prompt_cache))
+        usage = getattr(r, "usage", None)
+        self.last_usage = {k: int(getattr(usage, k, 0) or 0) for k in
+                           ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")}
         return "".join(b.text for b in r.content if b.type == "text").strip()
 
 
