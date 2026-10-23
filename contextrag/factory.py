@@ -131,8 +131,12 @@ def from_env() -> ContextRAG:
         from .memory.summarizer import ExtractiveSummarizer
         from .memory.worker import CompactionWorker
 
-        memory = ConversationStore(memory_path, max_attempts=cfg.memory_job_max_attempts,
-                                   queue_limit=cfg.memory_queue_limit)
+        plaintext = env("MEMORY_PLAINTEXT") == "1"  # explicit opt-out, for development only
+        if cipher is None and not plaintext:
+            raise RuntimeError("MEMORY_DB is set but MASTER_KEY is not: conversations are not stored in plaintext. "
+                               "Set MASTER_KEY, or MEMORY_PLAINTEXT=1 for development.")
+        memory = ConversationStore(memory_path, cipher=cipher, plaintext=plaintext,
+                                   max_attempts=cfg.memory_job_max_attempts, queue_limit=cfg.memory_queue_limit)
         compactor = CompactionWorker(memory, ExtractiveSummarizer(), workers=cfg.memory_workers,
                                      lease_seconds=cfg.memory_lease_seconds)
         compactor.recover()  # jobs left running by a previous crash resume here

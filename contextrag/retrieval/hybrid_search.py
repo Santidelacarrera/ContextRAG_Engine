@@ -19,7 +19,9 @@ def reciprocal_rank_fusion(rankings: Sequence[Sequence[ChildChunk]], k: int = 60
         for pos, c in enumerate(ranking, start=1):
             by_id[c.id] = c
             score[c.id] = score.get(c.id, 0.0) + 1.0 / (k + pos)
-    return [(by_id[i], score[i]) for i in sorted(score, key=lambda i: (-score[i], i))]
+    # Exact ties are broken by document position, never by chunk id: ids are hashes that include the tenant, so an
+    # id tie-break made the ranking (and every metric built on it) depend on the tenant's name.
+    return [(by_id[i], score[i]) for i in sorted(score, key=lambda i: (-score[i], by_id[i].doc_id, by_id[i].start))]
 
 
 class HybridIndex:

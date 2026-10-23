@@ -86,7 +86,7 @@ class BM25Index:
         qset = set(q)
         hits = [(idx.chunks[i], float(scores[i])) for i in range(len(idx.chunks))
                 if idx.termsets[i] & qset and visible(idx.chunks[i].acl, groups)]
-        return sorted(hits, key=lambda x: (-x[1], x[0].id))[:k]
+        return sorted(hits, key=lambda x: (-x[1], x[0].doc_id, x[0].start))[:k]
 
 
 class IncrementalBM25Index:
@@ -143,7 +143,7 @@ class IncrementalBM25Index:
                     norm = self.k1 * (1 - self.b + self.b * inc.dl[cid] / avgdl) + tf
                     scores[cid] = scores.get(cid, 0.0) + qf * idf * (tf * (self.k1 + 1) / norm)
             hits = [(inc.chunks[cid], s + offset) for cid, s in scores.items() if visible(inc.chunks[cid].acl, groups)]
-        return sorted(hits, key=lambda x: (-x[1], x[0].id))[:k]
+        return sorted(hits, key=lambda x: (-x[1], x[0].doc_id, x[0].start))[:k]
 
 
 class _Inc:
