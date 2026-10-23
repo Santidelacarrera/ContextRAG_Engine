@@ -32,7 +32,7 @@ def from_env() -> ContextRAG:
 
     EMBEDDER=hashing|bge (EMBED_MODEL)   RERANKER=lexical|cross-encoder|cohere (COHERE_API_KEY, RERANK_MIN_SCORE: relevance floor)
     NLI=lexical|deberta (NLI_MODEL)                  LLM=extractive|anthropic|ollama (LLM_MODEL, OLLAMA_HOST)
-    QDRANT_URL (else embedded in-memory)  POSTGRES_DSN (else in-memory audit; POSTGRES_ADMIN_DSN = owner for schema/retention)  REDIS_URL (else in-memory cache)
+    QDRANT_URL (else embedded in-memory)  MEMORY_DB (SQLite path; conversations off without it) POSTGRES_DSN (else in-memory audit; POSTGRES_ADMIN_DSN = owner for schema/retention)  REDIS_URL (else in-memory cache)
     BM25=rank|incremental (rank = rank_bm25, rebuilt after changes; incremental = same scores, fast under frequent ingests)
     MASTER_KEY (enables per-tenant encryption of chunk text at rest)  CONTEXTRAG_* (see Settings)
     """
@@ -115,5 +115,16 @@ def from_env() -> ContextRAG:
         bm25 = IncrementalBM25Index(loader=lambda tenant: store.iter_children(tenant))
     else:
         bm25 = None
+    memory = compactor = None
+    if env("MEMORY_DB"):  # durable conversations: a SQLite file path, e.g. /data/memory.db
+        from .memory.store import ConversationStore
+        from .memory.summarizer import ExtractiveSummarizer
+        from .memory.worker import CompactionWorker
+
+        memory = ConversationStore(env("MEMORY_DB"), max_attempts=cfg.memory_job_max_attempts,
+                                   queue_limit=cfg.memory_queue_limit)
+        compactor = CompactionWorker(memory, ExtractiveSummarizer(), workers=cfg.memory_workers,
+                                     lease_seconds=cfg.memory_lease_seconds)
+        compactor.recover()  # jobs left running by a previous crash resume here
     return ContextRAG(index=HybridIndex(store, bm25), embedder=embedder, reranker=reranker, llm=llm, nli=nli,
-                      audit=audit, cache=cache, settings=cfg)
+                      audit=audit, cache=cache, settings=cfg, memory=memory, compactor=compactor)

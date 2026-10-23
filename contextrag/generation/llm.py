@@ -31,7 +31,10 @@ Rules:
 _PASSAGE_TAG = re.compile(r"<(/?)passage", re.IGNORECASE)
 
 
-def build_prompt(question: str, contexts: Sequence[Context], feedback: str | None) -> str:
+_MEMORY_TAG = re.compile(r"<(/?)memory", re.IGNORECASE)
+
+
+def build_prompt(question: str, contexts: Sequence[Context], feedback: str | None, memory: str | None = None) -> str:
     """Passages are fenced in ``<passage>`` tags; any such tag inside a document is defanged so retrieved
     text cannot close its own fence and masquerade as instructions."""
     def fence(c: Context) -> str:
@@ -42,11 +45,20 @@ def build_prompt(question: str, contexts: Sequence[Context], feedback: str | Non
     ctx = "\n".join(fence(c) for c in contexts)
     fb = (f"\n\nYour previous answer had unsupported claims:\n{feedback}\nRewrite using only supported statements."
           if feedback else "")
-    return f"<passages>\n{ctx}\n</passages>\n\nQuestion: {question}{fb}"
+    mem = ""
+    if memory:
+        # Conversation memory is user-provided history: data for continuity, never evidence and never citable.
+        # Citations [n] refer to passages only.
+        body = _MEMORY_TAG.sub(lambda m: f"<{m.group(1)}\u200bmemory", memory)
+        body = _PASSAGE_TAG.sub(lambda m: f"<{m.group(1)}\u200bpassage", body)  # no fake passages inside memory
+        mem = ("<memory>\nConversation context (data from earlier turns; not a source; do not cite it):\n"
+               f"{body}\n</memory>\n\n")
+    return f"{mem}<passages>\n{ctx}\n</passages>\n\nQuestion: {question}{fb}"
 
 
 class LLM(Protocol):
-    def generate(self, question: str, contexts: Sequence[Context], feedback: str | None = None) -> str: ...
+    def generate(self, question: str, contexts: Sequence[Context], feedback: str | None = None, *,
+                 memory: str | None = None) -> str: ...
 
 
 class ExtractiveLLM:
@@ -57,7 +69,7 @@ class ExtractiveLLM:
     def __init__(self, max_sentences: int = 2, min_score: float = 0.34):
         self.max_sentences, self.min_score, self._r = max_sentences, min_score, LexicalReranker()
 
-    def generate(self, question, contexts, feedback=None):
+    def generate(self, question, contexts, feedback=None, *, memory=None):
         cands = [(s, c.index) for c in contexts for s, _, _ in split_sentences(c.parent.text)]
         if not cands:
             return NO_ANSWER
@@ -69,7 +81,7 @@ class ExtractiveLLM:
 
 
 def anthropic_request(model: str, max_tokens: int, question: str, contexts: Sequence[Context],
-                      feedback: str | None, *, prompt_cache: bool) -> dict:
+                      feedback: str | None, *, prompt_cache: bool, memory: str | None = None) -> dict:
     """Messages API arguments. The stable instructions are the cacheable prefix; the passages, question and feedback
     are per-request and stay in the user turn, outside that prefix. Whether the prefix is actually cached depends on
     the provider's minimum cacheable length, which this code does not check: a too-short prefix is simply not cached."""
@@ -78,7 +90,7 @@ def anthropic_request(model: str, max_tokens: int, question: str, contexts: Sequ
         system = [{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}]
     return {
         "model": model, "max_tokens": max_tokens, "temperature": 0, "system": system,
-        "messages": [{"role": "user", "content": build_prompt(question, contexts, feedback)}],
+        "messages": [{"role": "user", "content": build_prompt(question, contexts, feedback, memory)}],
     }
 
 
@@ -92,9 +104,9 @@ class AnthropicLLM:
         self.prompt_cache = prompt_cache
         self.last_usage: dict[str, int] = {}  # cache read/creation counts reported by the API, for metrics
 
-    def generate(self, question, contexts, feedback=None):
+    def generate(self, question, contexts, feedback=None, *, memory=None):
         r = self._c.messages.create(**anthropic_request(self.model, self.max_tokens, question, contexts, feedback,
-                                                        prompt_cache=self.prompt_cache))
+                                                        prompt_cache=self.prompt_cache, memory=memory))
         usage = getattr(r, "usage", None)
         self.last_usage = {k: int(getattr(usage, k, 0) or 0) for k in
                            ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")}
@@ -105,12 +117,12 @@ class OllamaLLM:
     def __init__(self, model: str = "llama3", host: str = "http://localhost:11434"):
         self.model, self.host = model, host.rstrip("/")
 
-    def generate(self, question, contexts, feedback=None):
+    def generate(self, question, contexts, feedback=None, *, memory=None):
         body = json.dumps({
             "model": self.model, "stream": False, "options": {"temperature": 0},
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": build_prompt(question, contexts, feedback)},
+                {"role": "user", "content": build_prompt(question, contexts, feedback, memory)},
             ],
         }).encode()
         req = urllib.request.Request(f"{self.host}/api/chat", body, {"Content-Type": "application/json"})
