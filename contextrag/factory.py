@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import os
 
-from .audit import InMemoryAudit
-from .core.cache import CachedEmbedder, InMemoryCache
+from .audit import AuditLog, InMemoryAudit
+from .core.cache import Cache, CachedEmbedder, InMemoryCache
 from .core.config import Settings
-from .core.embeddings import HashingEmbedder
-from .generation.llm import ExtractiveLLM
+from .core.embeddings import Embedder, HashingEmbedder
+from .generation.llm import LLM, ExtractiveLLM
 from .pipeline import ContextRAG
+from .retrieval.bm25 import BM25Index, IncrementalBM25Index
 from .retrieval.hybrid_search import HybridIndex
-from .retrieval.reranker import LexicalReranker
-from .retrieval.vector_store import InMemoryVectorStore
-from .verification.nli_verifier import LexicalEntailment
+from .retrieval.reranker import LexicalReranker, Reranker
+from .retrieval.vector_store import InMemoryVectorStore, VectorStore
+from .verification.nli_verifier import LexicalEntailment, NLIModel
 
 
 def _opt_float(v: str | None) -> float | None:
@@ -39,12 +40,14 @@ def from_env() -> ContextRAG:
     env = os.getenv
     cfg = Settings.from_env()
 
-    cache = InMemoryCache()
-    if env("REDIS_URL"):
+    cache: Cache = InMemoryCache()
+    redis_url = env("REDIS_URL")
+    if redis_url:
         from .core.cache import RedisCache
 
-        cache = RedisCache(env("REDIS_URL"))
+        cache = RedisCache(redis_url)
 
+    embedder: Embedder
     if env("EMBEDDER", "hashing") == "bge":
         from .core.embeddings import SentenceTransformerEmbedder
 
@@ -55,7 +58,9 @@ def from_env() -> ContextRAG:
 
     from .core.security import TenantCipher
 
-    cipher = TenantCipher(env("MASTER_KEY").encode()) if env("MASTER_KEY") else None
+    master_key = env("MASTER_KEY")
+    cipher = TenantCipher(master_key.encode()) if master_key else None
+    store: VectorStore
     if env("QDRANT_URL") or cipher:
         from qdrant_client import QdrantClient
 
@@ -67,6 +72,7 @@ def from_env() -> ContextRAG:
         store = InMemoryVectorStore()
 
     rer = env("RERANKER", "lexical")
+    reranker: Reranker
     if rer == "cohere":
         from .retrieval.reranker import CohereReranker
 
@@ -83,6 +89,7 @@ def from_env() -> ContextRAG:
 
         reranker = BoundedReranker(reranker, cfg.reranker_timeout_seconds)
 
+    nli: NLIModel
     if env("NLI", "lexical") == "deberta":
         from .verification.nli_verifier import DebertaNLI
 
@@ -91,6 +98,7 @@ def from_env() -> ContextRAG:
         nli = LexicalEntailment()
 
     llm_kind = env("LLM", "extractive")
+    llm: LLM
     if llm_kind == "anthropic":
         from .generation.llm import AnthropicLLM
 
@@ -102,26 +110,28 @@ def from_env() -> ContextRAG:
     else:
         llm = ExtractiveLLM()
 
-    if env("POSTGRES_DSN"):
+    audit: AuditLog
+    dsn = env("POSTGRES_DSN")
+    if dsn:
         from .audit import PostgresAudit
 
-        audit = PostgresAudit(env("POSTGRES_DSN"), embedder.dim, admin_dsn=env("POSTGRES_ADMIN_DSN") or None)
+        audit = PostgresAudit(dsn, embedder.dim, admin_dsn=env("POSTGRES_ADMIN_DSN") or None)
     else:
         audit = InMemoryAudit()
 
+    bm25: BM25Index | IncrementalBM25Index | None = None
     if env("BM25", "rank") == "incremental":
         from .retrieval.bm25 import IncrementalBM25Index
 
         bm25 = IncrementalBM25Index(loader=lambda tenant: store.iter_children(tenant))
-    else:
-        bm25 = None
     memory = compactor = None
-    if env("MEMORY_DB"):  # durable conversations: a SQLite file path, e.g. /data/memory.db
+    memory_path = env("MEMORY_DB")
+    if memory_path:  # durable conversations: a SQLite file path, e.g. /data/memory.db
         from .memory.store import ConversationStore
         from .memory.summarizer import ExtractiveSummarizer
         from .memory.worker import CompactionWorker
 
-        memory = ConversationStore(env("MEMORY_DB"), max_attempts=cfg.memory_job_max_attempts,
+        memory = ConversationStore(memory_path, max_attempts=cfg.memory_job_max_attempts,
                                    queue_limit=cfg.memory_queue_limit)
         compactor = CompactionWorker(memory, ExtractiveSummarizer(), workers=cfg.memory_workers,
                                      lease_seconds=cfg.memory_lease_seconds)

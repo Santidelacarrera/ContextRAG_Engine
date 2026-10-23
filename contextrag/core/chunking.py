@@ -199,7 +199,7 @@ def chunk_document(
             ranges.append((i, j, seg.section))
 
     # greedy packing of consecutive segments into parents
-    packed: list[tuple[int, int, str]] = []
+    packed: list[tuple[tuple[int, int], str]] = []
     cur: tuple[tuple[int, int], str] | None = None  # ((i, j), section)
 
     for i, j, section in ranges:
@@ -222,13 +222,12 @@ def chunk_document(
         packed.append(cur)
 
     # Reformat packed list for compatibility with rest of code
-    packed_formatted: list[tuple[int, int, str]] = [(i, j, section) for (i, j), section in packed]
-    packed = packed_formatted
+    packed_triples: list[tuple[int, int, str]] = [(i, j, section) for (i, j), section in packed]
 
     parents: list[ParentChunk] = []
     children: list[ChildChunk] = []
     step = cfg.child_tokens - cfg.child_overlap_tokens
-    for i, j, section in packed:
+    for i, j, section in packed_triples:
         ps, pe = toks[i][0], toks[j - 1][1]
         pid = _id(tenant, doc_id, ps, pe)
         page = bisect.bisect_right(page_starts, ps) if page_starts else None

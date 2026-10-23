@@ -313,10 +313,32 @@ flowchart TD
 
 **Presupuesto de evidencia (`contextrag/context/budget.py`).** Los padres recuperados se deduplican (Jaccard sobre
 tokens de palabra, umbral `CONTEXTRAG_CONTEXT_DEDUPE_JACCARD`), se admiten en orden de relevancia mientras quepan en
-`CONTEXTRAG_CONTEXT_BUDGET_TOKENS` menos `CONTEXTRAG_CONTEXT_SAFETY_MARGIN`, y se colocan con `edges` (el mejor primero,
-el segundo mejor al final, el resto en medio) o `descending`. Las citas `[n]` se renumeran según la posición final.
-El recuento de tokens es **una estimación** (palabras y signos), no el tokenizador del modelo; por eso existe el margen
-de seguridad. Que `edges` mejore las respuestas es una hipótesis que hay que medir, no una garantía.
+`CONTEXTRAG_CONTEXT_BUDGET_TOKENS` menos `CONTEXTRAG_CONTEXT_SAFETY_MARGIN`. Si un padre no cabe, se usa **su mejor hijo**
+como evidencia (compresión por span): sus coordenadas son absolutas en el documento, así que la atribución sigue siendo
+exacta. La colocación es `descending` por defecto (el orden previo); `edges` (el mejor primero, el segundo al final) es
+opt-in. Las citas `[n]` se renumeran según la posición final. El recuento de tokens es **una estimación** (palabras y
+signos), no el tokenizador del modelo; por eso existe el margen de seguridad. Que `edges` mejore las respuestas **no está
+medido**: la métrica de evaluación penaliza `edges` por construcción, así que no sirve para decidirlo.
+
+**Conversación en `/query`.** Con `conversation_id` (y `MEMORY_DB` configurado), el turno se guarda después de la
+respuesta. El prompt recibe las memorias relevantes y los turnos recientes en un bloque `<memory>` separado, marcado como
+datos y **no citable**; sus etiquetas de pasaje se neutralizan. Las respuestas de conversación no usan la caché de
+respuestas. `DELETE /conversations/{id}` borra una conversación del tenant (requiere permiso `erase`).
+
+**Evaluación sin juez LLM (`contextrag/eval/context_metrics.py`).** `context_recall` y `average_precision` usan la
+respuesta de referencia como oráculo y se calculan con la misma ruta de recuperación que `/query`. No son RAGAS: la
+faithfulness, la relevancia de la respuesta y la precisión con juez necesitan un LLM, y este entorno no lo tiene. La línea
+base está en `contextrag/eval/data/context_baseline.json` y un test falla si una métrica baja. Medido en el corpus sintético
+(`contextrag/eval/long_corpus.py`, determinista, 6 documentos largos, 18 preguntas):
+
+| Configuración | Recall | Precisión promedio |
+|---|---|---|
+| Padre 1024 / hijo 256, presupuesto 4096 (defecto) | 1.000 | 0.755 |
+| Padre 2000 / hijo 400, presupuesto 4096 | 0.944 | 0.815 |
+| Padre 1024 / hijo 256, presupuesto 2048 | 0.889 | 0.727 |
+
+Con estos datos se mantienen los tamaños por defecto: son los que no pierden evidencia. Son cifras sintéticas y léxicas;
+no dicen nada sobre documentos reales.
 
 **Reranking (`contextrag/retrieval/reranker.py`).** `CohereReranker` exige una puntuación por candidato: un índice que no
 llega, o llega dos veces, es un `RerankerError`, nunca un 0.0 inventado. `BoundedReranker` aplica un timeout
@@ -349,14 +371,15 @@ presupuesto, la colocación, el umbral, el tipo de LLM y su modelo, para no serv
 `tests/test_llm_request.py` y `tests/test_memory.py` (consistencia de versiones, job obsoleto, claim de zombi, reintentos,
 cola acotada, recuperación tras reinicio, aislamiento por tenant y borrado). Ninguna prueba llama a un proveedor externo.
 
-**Pendiente (no implementado en esta versión).**
-- El almacén de memoria **no está conectado a `/query`**: no hay `conversation_id` en la API y las memorias relevantes no
-  se inyectan en el prompt. Está probado en aislamiento, no integrado en el flujo de petición.
-- Evaluación con RAGAS/TruLens: no integrada. Requiere un juez LLM y datos de referencia; no se han medido métricas.
-- Reranker BGE: el adaptador existe (`CrossEncoderReranker`) pero no tiene prueba contra un modelo real.
-- Compresión contextual dentro de un padre: no implementada. Un padre que no cabe se omite, no se recorta.
-- Tamaños por defecto de chunking (1024/256 tokens) distintos de los propuestos (≈2000/400): cambiarlos altera el índice y
-  las líneas base de evaluación; queda como decisión medible, no hecha.
-- Resumen con LLM: no implementado; solo el extractivo.
-- Cumplimiento de mypy estricto en el código anterior: quedan errores heredados en `chunking`, `pipeline`, `audit`,
-  `config` y `text`. Los módulos nuevos pasan mypy sin errores.
+**Pendiente (no implementado o no verificado).**
+- **RAGAS / TruLens (faithfulness, relevancia de la respuesta, precisión con juez):** no ejecutado. Necesita un LLM juez.
+- **Reranker BGE:** el adaptador `CrossEncoderReranker` existe, pero no se ha verificado contra un modelo real: en el
+  entorno de desarrollo `torch`, `sentence-transformers` y el host de Hugging Face no estaban disponibles.
+- **Adaptador Cohere:** la validación de la respuesta está probada con un cliente simulado; no contra la API real.
+- **Caché de prompts de Anthropic:** la forma de la petición está probada; el efecto real (aciertos de caché y longitud
+  mínima cacheable) no se ha medido contra la API.
+- **Memoria:** el resumen es solo extractivo; no hay caducidad (`expires_at`) ni redacción de datos personales en los turnos.
+  Los turnos se guardan en claro en el SQLite de `MEMORY_DB`; protegerlo es responsabilidad del despliegue.
+- **Tamaños de chunking:** los propuestos (≈2000/400) no se adoptaron: en el corpus sintético pierden recall. Una decisión
+  definitiva requiere documentos reales.
+- **Métricas de operación de la memoria** (profundidad de cola, latencia de compactación): no expuestas en `/metrics`.

@@ -17,7 +17,7 @@ import logging
 import time
 import uuid
 from collections.abc import Callable
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -82,7 +82,7 @@ _ERROR_CODE = {"tenant_mismatch": "tenant_mismatch", "rls_denied": "tenant_not_a
                "database_not_configured": "retrieval_store_unavailable"}
 
 
-def register_retrieve(app: FastAPI, *, get_rag: Callable[[], ContextRAG], get_db: Callable[[], object | None],
+def register_retrieve(app: FastAPI, *, get_rag: Callable[[], ContextRAG], get_db: Callable[[], Any],
                       caller_dep: Callable) -> None:
     def refuse(rag: ContextRAG, status: int, reason: str, request_id: str, **fields) -> JSONResponse:
         """A rejection or failure: counted per reason, logged as one JSON event, returned as a JSON error."""
@@ -122,15 +122,15 @@ def register_retrieve(app: FastAPI, *, get_rag: Callable[[], ContextRAG], get_db
             mapped = db_error_status(exc)
             if mapped is None:
                 raise
-            status, reason = mapped
-            return refuse(rag, status, reason, request_id, error_class=type(exc).__name__, **who)
+            http_status, reason = mapped
+            return refuse(rag, http_status, reason, request_id, error_class=type(exc).__name__, **who)
 
         fragments = [FragmentOut(index=ctx.index, score=ctx.score, doc_id=ctx.parent.doc_id,
                                  source=ctx.parent.source, section=ctx.parent.section, page=ctx.parent.page,
                                  start=ctx.parent.start, end=ctx.parent.end, text=ctx.parent.text)
                      for ctx in contexts]
         draft = _extractive.generate(body.query, contexts) if contexts else NO_ANSWER
-        status = "ok" if fragments else "no_results"
+        status: Literal["ok", "no_results"] = "ok" if fragments else "no_results"
         rag.count(f'retrieve_served_total{{status="{status}"}}')
         emit(log, logging.INFO, "retrieve.served", request_id=request_id, status=status, fragments=len(fragments),
              top_k=body.top_k, latency_ms=round(latency_ms, 2), **who)

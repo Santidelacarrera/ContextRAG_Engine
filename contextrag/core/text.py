@@ -24,7 +24,7 @@ def is_abbreviation(word: str) -> bool:
 
 def _ends_with_abbreviation(segment: str) -> bool:
     m = re.search(r"([\w.]+)\.$", segment.rstrip())
-    return bool(m) and is_abbreviation(m.group(1))
+    return m is not None and is_abbreviation(m.group(1))
 
 
 def tokenize(text: str) -> list[str]:

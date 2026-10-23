@@ -42,7 +42,9 @@ class VerifierReport:
 
 def eval_verifier(nli: NLIModel, threshold: float = 0.95, cases: list[dict] | None = None) -> VerifierReport:
     cases = cases if cases is not None else load_json("verifier_cases.json")
-    false_sup, missed, cat = [], [], {}
+    false_sup: list[str] = []
+    missed: list[str] = []
+    cat: dict[str, list[float]] = {}
     pos = neg = 0
     for c in cases:
         accepted = verify_attribution(c["claim"], [c["premise"]], nli) >= threshold

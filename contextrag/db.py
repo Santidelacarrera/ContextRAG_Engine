@@ -51,6 +51,12 @@ CREATE POLICY tenant_isolation ON {TABLE}
 """
 
 
+def _scalar(row: tuple | None) -> str:
+    if row is None:
+        raise RuntimeError("query returned no row")
+    return str(row[0])
+
+
 class TenantDB:
     """Pool of application-role connections; every transaction is bound to one tenant."""
 
@@ -66,7 +72,7 @@ class TenantDB:
         self._known_months: set[str] = set()
         try:
             with self.pool.connection() as conn:
-                self.app_role = conn.execute("SELECT current_user").fetchone()[0]
+                self.app_role = _scalar(conn.execute("SELECT current_user").fetchone())
             self._ensure_schema()
         except Exception:  # a refused schema must not leave pool workers running behind the caller
             self.close()
@@ -83,7 +89,7 @@ class TenantDB:
                 raise RuntimeError(f"{TABLE} exists but is not partitioned; apply "
                                    "deploy/migrations/001_retrieval_audit_partitioned.sql first")
             self._admin.execute(_SCHEMA)
-            owner = self._admin.execute("SELECT current_user").fetchone()[0]
+            owner = _scalar(self._admin.execute("SELECT current_user").fetchone())
             if self.app_role != owner:  # append-only for the application: no UPDATE/DELETE grant
                 self._admin.execute(sql.SQL("GRANT SELECT, INSERT ON {} TO {}").format(
                     sql.Identifier(TABLE), sql.Identifier(self.app_role)))

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, fields
+from collections.abc import Callable
+from dataclasses import MISSING, dataclass, fields
+from typing import Any
 
 
 @dataclass
@@ -26,7 +28,8 @@ class Settings:
     context_budget_tokens: int = 4096  # == top_k * parent_tokens at the defaults: no behaviour change
     context_safety_margin: float = 0.10  # fraction of the budget held back for tokenizer estimation error
     context_dedupe_jaccard: float = 0.8  # parents this similar to a better-ranked one are dropped
-    context_placement: str = "edges"  # edges: best first and second-best last; descending: best first
+    # descending keeps the pre-existing order; edges is opt-in until an LLM-based experiment shows a gain
+    context_placement: str = "descending"
     # reranking
     reranker_timeout_seconds: float = 10.0  # a reranker call that exceeds this fails the request (never guessed)
     # conversational memory
@@ -69,9 +72,11 @@ class Settings:
 
     @classmethod
     def from_env(cls, prefix: str = "CONTEXTRAG_") -> "Settings":
-        out = {}
+        out: dict[str, Any] = {}
         for f in fields(cls):
             raw = os.getenv(prefix + f.name.upper())
             if raw is not None:
-                out[f.name] = type(f.default)(raw)
+                default = f.default if f.default is not MISSING else None
+                convert: Callable[[str], Any] = type(default) if default is not None else str
+                out[f.name] = convert(raw)
         return cls(**out)

@@ -6,7 +6,7 @@ from typing import Sequence
 
 from ..core.config import Settings
 from ..core.models import ChildChunk, Context, ParentChunk
-from .bm25 import BM25Index
+from .bm25 import BM25Index, IncrementalBM25Index
 from .reranker import Reranker
 from .vector_store import VectorStore
 
@@ -25,7 +25,7 @@ def reciprocal_rank_fusion(rankings: Sequence[Sequence[ChildChunk]], k: int = 60
 class HybridIndex:
     """Keeps the vector store and the BM25 index in sync."""
 
-    def __init__(self, store: VectorStore, bm25: BM25Index | None = None):
+    def __init__(self, store: VectorStore, bm25: BM25Index | IncrementalBM25Index | None = None):
         self.store = store
         self.bm25 = bm25 or BM25Index(loader=lambda tenant: store.iter_children(tenant))
         self.lock = threading.RLock()  # makes replace_document atomic with respect to search
@@ -76,22 +76,31 @@ class HybridRetriever:
     def retrieve(self, query: str, tenant: str, groups: frozenset[str] = frozenset(),
                  top_k: int | None = None) -> list[Context]:
         """Top-K parent chunks, ordered by the best reranker score of any of their children."""
+        return [ctx for ctx, _ in self.retrieve_detailed(query, tenant, groups, top_k)]
+
+    def retrieve_detailed(self, query: str, tenant: str, groups: frozenset[str] = frozenset(),
+                          top_k: int | None = None) -> list[tuple[Context, ChildChunk]]:
+        """Like ``retrieve``, plus the child that matched each parent best. That child's exact span is the fallback
+        evidence when the whole parent does not fit the evidence budget."""
         fused = self.search_children(query, tenant, groups)[: self.cfg.rerank_candidates]
         if not fused:
             return []
         scores = self.reranker.score(query, [c.text for c, _ in fused])
         best: dict[str, float] = {}
+        best_child: dict[str, ChildChunk] = {}
         for (child, _), s in zip(fused, scores, strict=True):
-            best[child.parent_id] = max(s, best.get(child.parent_id, float("-inf")))
+            if child.parent_id not in best or s > best[child.parent_id]:
+                best[child.parent_id] = s
+                best_child[child.parent_id] = child
         floor = getattr(self.reranker, "min_score", None)
-        contexts: list[Context] = []
+        out: list[tuple[Context, ChildChunk]] = []
         with self.index.lock:  # a concurrent replace_document must not delete a parent between rank and fetch
             for pid in sorted(best, key=lambda p: -best[p]):
                 if floor is not None and best[pid] <= floor:
                     continue
                 parent = self.index.store.parent(pid, tenant)
                 if parent is not None:
-                    contexts.append(Context(len(contexts) + 1, parent, best[pid]))
-                if len(contexts) >= (top_k or self.cfg.top_k):
+                    out.append((Context(len(out) + 1, parent, best[pid]), best_child[pid]))
+                if len(out) >= (top_k or self.cfg.top_k):
                     break
-        return contexts
+        return out

@@ -6,13 +6,13 @@ import json
 import logging
 import threading
 import time
-from collections import Counter
+from collections import defaultdict
 
 from .audit import AuditLog, record_of
 from .core.cache import Cache
 from .core.config import Settings
 from .core.ingestion import Ingestor
-from .context.budget import ContextBudget, assemble_evidence
+from .context.budget import ContextBudget, assemble_evidence, span_context
 from .core.models import Answer, Status
 from .core.text import content_tokens, stem
 from .generation.llm import LLM, NO_ANSWER, GenerationError
@@ -41,7 +41,7 @@ class ContextRAG:
         self.retriever = HybridRetriever(index, embedder, reranker, self.cfg)
         self.verifier = NLIVerifier(nli, self.cfg.verification_threshold)
         self.budget = ContextBudget(self.cfg.context_budget_tokens, self.cfg.context_safety_margin)
-        self._stats: Counter = Counter()
+        self._stats: dict[str, float] = defaultdict(float)
         self._stats_lock = threading.Lock()
 
     # -- public API -----------------------------------------------------------------------
@@ -126,7 +126,7 @@ class ContextRAG:
 
     def _cached(self, question, tenant, groups, top_k) -> Answer | None:
         key = self._key(question, tenant, groups, top_k)
-        hit = self.cache.get(key) if key else None
+        hit = self.cache.get(key) if (key and self.cache) else None
         if hit is None:
             return None
         a = Answer.from_dict(json.loads(hit))
@@ -135,7 +135,7 @@ class ContextRAG:
 
     def _store(self, question, tenant, groups, top_k, answer: Answer) -> None:
         key = self._key(question, tenant, groups, top_k)
-        if key and answer.status is Status.VERIFIED:  # never pin a transient fallback in the cache
+        if key and self.cache and answer.status is Status.VERIFIED:  # never pin a transient fallback in the cache
             self.cache.set(key, json.dumps(answer.to_dict()), self.cfg.cache_ttl_seconds)
 
     # -- conversations ------------------------------------------------------------------------
@@ -162,8 +162,11 @@ class ContextRAG:
             q = {stem(t) for t in content_tokens(query)}
             return float(len(q & {stem(t) for t in content_tokens(text)}))
 
-        memories = self.memory.relevant_memories(tenant, conversation_id, question, self.cfg.memory_relevant_k, overlap)
-        window = self.memory.history_window(tenant, conversation_id, self.cfg.memory_history_tokens)
+        memory = self.memory
+        if memory is None:  # guarded by _conversational; keeps the type narrow for readers and mypy
+            raise ConversationUnavailable("conversation memory is not configured (MEMORY_DB)")
+        memories = memory.relevant_memories(tenant, conversation_id, question, self.cfg.memory_relevant_k, overlap)
+        window = memory.history_window(tenant, conversation_id, self.cfg.memory_history_tokens)
         lines = [f"- ({m.memory_type}, user-stated) {m.content}" for m in memories]
         if window:
             lines.append("Recent turns:")
@@ -172,11 +175,13 @@ class ContextRAG:
 
     # -- core loop --------------------------------------------------------------------------
     def _answer(self, question, tenant, groups, top_k, memory_text: str | None = None) -> Answer:
-        retrieved = self.retriever.retrieve(question, tenant, groups, top_k)
-        if not retrieved:
+        detailed = self.retriever.retrieve_detailed(question, tenant, groups, top_k)
+        if not detailed:
             return self._fallback(question, [], [], 0, "no relevant context retrieved")
-        contexts = assemble_evidence(retrieved, self.budget, dedupe_threshold=self.cfg.context_dedupe_jaccard,
-                                     placement=self.cfg.context_placement)
+        spans = {ctx.parent.id: span_context(ctx, child) for ctx, child in detailed}
+        contexts = assemble_evidence([ctx for ctx, _ in detailed], self.budget,
+                                     dedupe_threshold=self.cfg.context_dedupe_jaccard,
+                                     placement=self.cfg.context_placement, spans=spans)
         if not contexts:
             return self._fallback(question, [], [], 0, "retrieved context does not fit the evidence budget")
 

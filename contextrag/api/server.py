@@ -164,7 +164,7 @@ def create_app(rag: ContextRAG | None = None, keystore: KeyStore | None = None,
                 raise HTTPException(422, f"{d.doc_id}: provide exactly one of text / content_base64")
             name = d.source or d.doc_id
             try:
-                doc = from_text(d.text, name, d.kind) if d.text is not None else load_base64(d.content_base64, name)
+                doc = from_text(d.text, name, d.kind) if d.text is not None else load_base64(d.content_base64 or "", name)
                 if d.kind and d.text is None and doc.kind != "pdf":
                     doc.kind = d.kind
             except (binascii.Error, ValueError) as e:
