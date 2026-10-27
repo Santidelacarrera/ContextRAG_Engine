@@ -23,7 +23,7 @@ def load_json(name: str, path: str | None = None):
     if path:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
-    return json.loads(resources.files("contextrag.eval").joinpath("data", name).read_text(encoding="utf-8"))
+    return json.loads(resources.files("contextrag.eval").joinpath("data").joinpath(name).read_text(encoding="utf-8"))
 
 
 @dataclass
