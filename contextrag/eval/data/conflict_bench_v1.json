@@ -1,0 +1,182 @@
+{
+ "version": 1,
+ "synthetic": true,
+ "cases": [
+  {
+   "id": "cont01",
+   "label": "contradiction",
+   "question": "¿Cuándo es la audiencia preliminar del expediente Alfa?",
+   "a": "La audiencia preliminar del expediente Alfa se fijó para el 5 de mayo de 2026.",
+   "b": "La audiencia preliminar del expediente Alfa se fijó para el 9 de junio de 2026.",
+   "note": "date"
+  },
+  {
+   "id": "cont02",
+   "label": "contradiction",
+   "question": "¿Cuál es el capital social de Industrias Valdivia S.A.?",
+   "a": "El capital social de Industrias Valdivia S.A. es de 120 millones de pesos.",
+   "b": "El capital social de Industrias Valdivia S.A. es de 150 millones de pesos.",
+   "note": "amount"
+  },
+  {
+   "id": "cont03",
+   "label": "contradiction",
+   "question": "¿Cuál es el monto de la indemnización del caso Beta?",
+   "a": "La indemnización del caso Beta asciende a 80 millones de pesos.",
+   "b": "La indemnización del caso Beta asciende a 95 millones de pesos.",
+   "note": "amount"
+  },
+  {
+   "id": "cont04",
+   "label": "contradiction",
+   "question": "¿Quién es el demandante del expediente Gamma?",
+   "a": "El demandante del expediente Gamma es Pedro Soto.",
+   "b": "El demandante del expediente Gamma es Juan Pérez.",
+   "note": "party"
+  },
+  {
+   "id": "cont05",
+   "label": "contradiction",
+   "question": "¿Fue notificada la sentencia del expediente Delta?",
+   "a": "La sentencia del expediente Delta fue notificada a la demandada.",
+   "b": "La sentencia del expediente Delta no fue notificada a la demandada.",
+   "note": "negation"
+  },
+  {
+   "id": "cont06",
+   "label": "contradiction",
+   "question": "¿Está vigente el contrato Epsilon?",
+   "a": "El contrato Epsilon se encuentra vigente al día de hoy.",
+   "b": "El contrato Epsilon se encuentra terminado al día de hoy.",
+   "note": "status"
+  },
+  {
+   "id": "cont07",
+   "label": "contradiction",
+   "question": "¿Cuál es el plazo de cierre del proyecto Zeta?",
+   "a": "El plazo de cierre del proyecto Zeta vence el 1 de marzo de 2027.",
+   "b": "El plazo de cierre del proyecto Zeta vence el 15 de marzo de 2027.",
+   "note": "date"
+  },
+  {
+   "id": "cont08",
+   "label": "contradiction",
+   "question": "¿Cuántas cuotas tiene el acuerdo Eta?",
+   "a": "El acuerdo Eta se paga en 6 cuotas mensuales.",
+   "b": "El acuerdo Eta se paga en 12 cuotas mensuales.",
+   "note": "number"
+  },
+  {
+   "id": "cont09",
+   "label": "contradiction",
+   "question": "¿Quién firmó el contrato Theta?",
+   "a": "El contrato Theta fue firmado por la notario Marta Rojas.",
+   "b": "El contrato Theta no fue firmado por la notario Marta Rojas.",
+   "note": "negation"
+  },
+  {
+   "id": "vers10",
+   "label": "version",
+   "question": "¿Cuál es el plazo de prescripción de la acción del reglamento interno?",
+   "a": "Versión 2019: el plazo de prescripción de la acción es de tres años.",
+   "b": "Versión 2024: el plazo de prescripción de la acción es de cinco años.",
+   "note": "old vs new figure"
+  },
+  {
+   "id": "vers11",
+   "label": "version",
+   "question": "¿Cuál es la tarifa de honorarios del servicio Iota?",
+   "a": "Tarifa vigente hasta 2023: 90 UF por hora del servicio Iota.",
+   "b": "Tarifa vigente desde 2024: 110 UF por hora del servicio Iota.",
+   "note": "old vs new figure"
+  },
+  {
+   "id": "comp12",
+   "label": "compatible",
+   "question": "¿Cuándo es la audiencia preliminar del expediente Alfa?",
+   "a": "La audiencia preliminar del expediente Alfa se fijó para el 5 de mayo de 2026.",
+   "b": "El expediente Alfa tiene su audiencia preliminar fijada el 05/05/2026.",
+   "note": "same date, other format and wording"
+  },
+  {
+   "id": "comp13",
+   "label": "compatible",
+   "question": "¿Cuál es el capital social de Industrias Valdivia S.A.?",
+   "a": "El capital social de Industrias Valdivia S.A. es de 120 millones de pesos.",
+   "b": "El capital social de Industrias Valdivia S.A. es de 120.000.000 pesos.",
+   "note": "same amount, other notation"
+  },
+  {
+   "id": "comp14",
+   "label": "compatible",
+   "question": "¿Cuándo es la audiencia preliminar del expediente Alfa?",
+   "a": "La audiencia preliminar del expediente Alfa se fijó para el 5 de mayo de 2026.",
+   "b": "La audiencia preliminar del expediente Alfa se fijó para el 5 de mayo de 2026 a las 10:00 horas.",
+   "note": "same date with extra detail"
+  },
+  {
+   "id": "comp15",
+   "label": "compatible",
+   "question": "¿Está vigente el contrato Kappa?",
+   "a": "El contrato Kappa se encuentra vigente al día de hoy.",
+   "b": "A la fecha, el contrato Kappa está vigente.",
+   "note": "same status, reworded"
+  },
+  {
+   "id": "comp16",
+   "label": "complementary",
+   "question": "¿Qué fechas tiene el contrato del expediente Lambda?",
+   "a": "El contrato del expediente Lambda se firmó el 5 de mayo de 2026.",
+   "b": "El contrato del expediente Lambda vence el 5 de mayo de 2029.",
+   "note": "signing and expiry: different facts"
+  },
+  {
+   "id": "comp17",
+   "label": "complementary",
+   "question": "¿Cuál es el domicilio de la sociedad Mu?",
+   "a": "La sociedad Mu tiene su domicilio en Valparaíso.",
+   "b": "La sociedad Mu tiene como gerente general a Ana Díaz.",
+   "note": "address and manager"
+  },
+  {
+   "id": "comp18",
+   "label": "complementary",
+   "question": "¿Cuánto cobra el servicio Nu?",
+   "a": "El servicio Nu cobra 90 UF por hora.",
+   "b": "El servicio Nu incluye soporte telefónico de lunes a viernes.",
+   "note": "price and scope"
+  },
+  {
+   "id": "homo19",
+   "label": "homonym",
+   "question": "¿Dónde tiene su domicilio Halvorsen?",
+   "a": "Halvorsen Group tiene su domicilio en Valdivia.",
+   "b": "Halvorsen Corp tiene su domicilio en Temuco.",
+   "note": "two entities, same first word: not a conflict"
+  },
+  {
+   "id": "homo20",
+   "label": "homonym",
+   "question": "¿Cuál es el capital social de Atlas?",
+   "a": "Proyecto Atlas Norte tiene un capital social de 120 millones de pesos.",
+   "b": "Proyecto Atlas Sur tiene un capital social de 340 millones de pesos.",
+   "note": "a name shared by two projects"
+  },
+  {
+   "id": "insu21",
+   "label": "insufficient",
+   "question": "¿Cuándo es la audiencia preliminar del expediente Alfa?",
+   "a": "La audiencia preliminar del expediente Alfa se fijó para el 5 de mayo de 2026.",
+   "b": "El Juzgado Tercero de Letras tiene su sede en Temuco.",
+   "note": "one statement is silent on the question"
+  },
+  {
+   "id": "insu22",
+   "label": "insufficient",
+   "question": "¿Cuál es el capital social de Industrias Valdivia S.A.?",
+   "a": "El capital social de Industrias Valdivia S.A. es de 120 millones de pesos.",
+   "b": "Industrias Valdivia S.A. se dedica a la fabricación de muebles.",
+   "note": "one statement is silent on the figure"
+  }
+ ]
+}

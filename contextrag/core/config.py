@@ -6,6 +6,16 @@ from dataclasses import MISSING, dataclass, fields
 from typing import Any
 
 
+def _parse_bool(raw: str) -> bool:
+    """``bool("false")`` is True, which would silently ignore an operator turning a switch off; parse explicitly."""
+    value = raw.strip().lower()
+    if value in ("1", "true", "yes", "on"):
+        return True
+    if value in ("0", "false", "no", "off"):
+        return False
+    raise ValueError(f"expected a boolean (true/false, 1/0, yes/no, on/off), got {raw!r}")
+
+
 @dataclass
 class Settings:
     # chunking (sizes are in tokens: words and punctuation marks)
@@ -42,6 +52,40 @@ class Settings:
     memory_history_tokens: int = 1000  # recent turns included in the prompt, newest first, within this budget
     memory_relevant_k: int = 5  # memories included per request: the ones that match the question
 
+    # Sources that disagree. "structured" compares dates and figures in near-identical statements about the same named
+    # subject (NOT semantic detection); "nli" asks an NLI model with a contradiction class (needs one, and a threshold that
+    # someone has calibrated); "off" disables it. See contextrag.verification.conflicts for what each one can and cannot see.
+    # The question names no subject but the evidence covers several with the same kind of statement ("when is the
+    # hearing?" over matters Alfa and Bravo): "note" answers and adds a warning, "clarify" asks which, "off" does neither.
+    ambiguity_policy: str = "note"
+    # What the audit log keeps of each query. "full" (default, unchanged behaviour) stores the text; "omit" stores only its
+    # length. Pilot deployments that do not need the text in the audit log should set "omit".
+    audit_question: str = "full"
+    audit_answer: str = "full"
+    conflict_detection: str = "structured"
+    conflict_threshold: float = 0.9  # NLI mode only; uncalibrated until measured on labelled data
+
+    # abstain, before calling the model, when the question names something (a capitalised term or an identifier with a
+    # digit) that the evidence never mentions; see contextrag.verification.entities for what this does and does not catch
+    require_question_entities: bool = True
+    # when the question names something the evidence lacks, look for a *documented* alias (an explicit "also known as" /
+    # "en adelante" declaration in ACL-visible text) before abstaining; two entities for one name means "ask which"
+    resolve_entity_aliases: bool = True
+    alias_lookup_k: int = 8  # passages read when looking for an alias declaration
+    # withhold retrieved passages that contain phrases typical of prompt injection and report them for human review;
+    # see contextrag.verification.injection for the limits of a pattern list
+    quarantine_suspected_injection: bool = True
+
+    # backpressure: requests beyond these limits wait at most ``busy_wait_seconds`` and are then refused with HTTP 503 and
+    # Retry-After, instead of queuing without bound (each ingest can hold a document of up to ``max_document_bytes``)
+    max_concurrent_queries: int = 16
+    max_concurrent_ingests: int = 4
+    busy_wait_seconds: float = 2.0
+
+    # ingestion limits, enforced before a file is parsed
+    max_document_bytes: int = 25_000_000  # larger files are refused (HTTP 413); also bounds what is held in memory
+    max_pdf_pages: int = 500  # PDFs with more pages are refused instead of being extracted page by page
+
     def __post_init__(self):
         # The decision gate: a threshold of 0 (or NaN, or >1) would silently disable -- or make unreachable -- the
         # verification the whole product rests on, so refuse it instead of "working".
@@ -69,6 +113,21 @@ class Settings:
             raise ValueError("memory_history_tokens and memory_relevant_k must be >= 0")
         if self.memory_lease_seconds <= 0:
             raise ValueError("memory_lease_seconds must be > 0")
+        if self.conflict_detection not in ("off", "structured", "nli"):
+            raise ValueError("conflict_detection must be 'off', 'structured' or 'nli'")
+        for name in ("audit_question", "audit_answer"):
+            if getattr(self, name) not in ("full", "omit"):
+                raise ValueError(f"{name} must be 'full' or 'omit'")
+        if self.ambiguity_policy not in ("off", "note", "clarify"):
+            raise ValueError("ambiguity_policy must be 'off', 'note' or 'clarify'")
+        if not (0.0 < self.conflict_threshold <= 1.0):
+            raise ValueError("conflict_threshold must be in (0, 1]")
+        if self.alias_lookup_k < 1:
+            raise ValueError("alias_lookup_k must be >= 1")
+        if self.max_concurrent_queries < 1 or self.max_concurrent_ingests < 1 or self.busy_wait_seconds < 0:
+            raise ValueError("concurrency limits must be >= 1 and busy_wait_seconds >= 0")
+        if self.max_document_bytes < 1 or self.max_pdf_pages < 1:
+            raise ValueError("max_document_bytes and max_pdf_pages must be >= 1")
 
     @classmethod
     def from_env(cls, prefix: str = "CONTEXTRAG_") -> "Settings":
@@ -77,6 +136,7 @@ class Settings:
             raw = os.getenv(prefix + f.name.upper())
             if raw is not None:
                 default = f.default if f.default is not MISSING else None
-                convert: Callable[[str], Any] = type(default) if default is not None else str
+                convert: Callable[[str], Any] = (_parse_bool if isinstance(default, bool)
+                                                 else type(default) if default is not None else str)
                 out[f.name] = convert(raw)
         return cls(**out)

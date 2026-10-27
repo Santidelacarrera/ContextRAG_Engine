@@ -1,8 +1,17 @@
-# docker compose -f deploy/docker-compose.yml up -d
+# docker compose --env-file .env -f deploy/docker-compose.yml up -d
+#
+# Secure defaults, on purpose:
+#  * every published port is bound to 127.0.0.1. To serve other machines put a TLS-terminating reverse proxy in front of
+#    the API; do not publish the databases.
+#  * no password has a default. Compose stops with a message naming the missing variable (see .env.example).
+#  * the API refuses to start without per-tenant keys (CONTEXTRAG_REQUIRE_AUTH) and without MASTER_KEY.
+# This file has not been run in the environment where it was edited (no Docker daemon); see the README checklist.
 services:
   qdrant:
     image: qdrant/qdrant:v1.12.4
-    ports: ["6333:6333"]
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:?set QDRANT_API_KEY}
+    ports: ["127.0.0.1:6333:6333"]
     volumes: [qdrant_data:/qdrant/storage]
     healthcheck:
       test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
@@ -14,10 +23,10 @@ services:
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: contextrag
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-contextrag}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       POSTGRES_DB: contextrag
-      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-contextrag_app}   # password of the plain role the API connects as
-    ports: ["5432:5432"]
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD}   # password of the plain role the API connects as
+    ports: ["127.0.0.1:5432:5432"]
     volumes:
       - pg_data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -30,10 +39,13 @@ services:
 
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--save", "", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
-    ports: ["6379:6379"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+    command: ["redis-server", "--save", "", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru",
+              "--requirepass", "${REDIS_PASSWORD}"]
+    ports: ["127.0.0.1:6379:6379"]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -44,11 +56,12 @@ services:
       dockerfile: deploy/Dockerfile
     environment:
       QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY:?set QDRANT_API_KEY}
       # the API runs as a plain role, so row-level security on the audit table applies to it
-      POSTGRES_DSN: postgresql://contextrag_app:${APP_DB_PASSWORD:-contextrag_app}@postgres:5432/contextrag
+      POSTGRES_DSN: postgresql://contextrag_app:${APP_DB_PASSWORD}@postgres:5432/contextrag
       # owner of the audit table: schema, monthly partitions and retention only
-      POSTGRES_ADMIN_DSN: postgresql://contextrag:${POSTGRES_PASSWORD:-contextrag}@postgres:5432/contextrag
-      REDIS_URL: redis://redis:6379/0
+      POSTGRES_ADMIN_DSN: postgresql://contextrag:${POSTGRES_PASSWORD}@postgres:5432/contextrag
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       BM25: ${BM25:-incremental}            # same scores as rank_bm25 but no rebuild per ingest (measured ~1.8x qps under mixed load)
       EMBEDDER: ${EMBEDDER:-hashing}        # hashing | bge
       RERANKER: ${RERANKER:-lexical}        # lexical | cross-encoder | cohere
@@ -57,11 +70,15 @@ services:
       LLM_MODEL: ${LLM_MODEL:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       COHERE_API_KEY: ${COHERE_API_KEY:-}
-      MASTER_KEY: ${MASTER_KEY:-}
-      CONTEXTRAG_API_KEY: ${CONTEXTRAG_API_KEY:-}            # shared secret (trusts X-Tenant)
-      CONTEXTRAG_KEYS_FILE: ${CONTEXTRAG_KEYS_FILE:-}        # per-tenant keys (recommended); mount the file, e.g. -v ./keys.json:/run/keys.json:ro
+      MASTER_KEY: ${MASTER_KEY:?set MASTER_KEY (python -c "import secrets; print(secrets.token_urlsafe(32))")}
+      MASTER_KEY_PREVIOUS: ${MASTER_KEY_PREVIOUS:-}          # only while rotating; see README
+      CONTEXTRAG_REQUIRE_AUTH: "true"                        # refuse to run in open or shared-secret mode
+      CONTEXTRAG_KEYS_FILE: ${CONTEXTRAG_KEYS_FILE:?set CONTEXTRAG_KEYS_FILE to the path of the keys file inside the container}
       CONTEXTRAG_RATE_LIMIT_PER_MIN: ${CONTEXTRAG_RATE_LIMIT_PER_MIN:-}
-    ports: ["8000:8000"]
+      # Audit minimisation: the log keeps lengths, not text. Set to "full" only to investigate an incident.
+      CONTEXTRAG_AUDIT_QUESTION: ${CONTEXTRAG_AUDIT_QUESTION:-omit}
+      CONTEXTRAG_AUDIT_ANSWER: ${CONTEXTRAG_AUDIT_ANSWER:-omit}
+    ports: ["127.0.0.1:8000:8000"]
     depends_on:
       qdrant: {condition: service_healthy}
       postgres: {condition: service_healthy}

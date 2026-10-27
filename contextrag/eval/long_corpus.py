@@ -27,7 +27,8 @@ FILLER = (
 
 def build_long_corpus(n_docs: int = 6, paragraphs: int = 60, facts_per_doc: int = 3, seed: int = 7):
     """Return ``{"documents": [...], "cases": [...]}`` in the same shape as ``rag_cases.json``."""
-    rng = random.Random(seed)
+    # seeded on purpose (reproducible evaluation data, not security-sensitive)
+    rng = random.Random(seed)  # nosec B311
     documents, cases = [], []
     for d in range(n_docs):
         doc_id = f"informe-{d:02d}.md"

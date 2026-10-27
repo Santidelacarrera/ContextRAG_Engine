@@ -2,6 +2,8 @@ name: ci
 on:
   push:
   pull_request:
+  schedule:
+    - cron: "17 5 * * 1"  # weekly: new advisories appear without any code change
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -17,7 +19,12 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y redis-server postgresql
       - run: pip install -e ".[dev,api]"
       - run: ruff check contextrag tests
+      - run: pip install mypy && mypy contextrag --ignore-missing-imports
       - run: pytest -q
+      - name: Benchmark dataset is exactly what its generator produces
+        run: python -m contextrag.eval.bench_corpus --check
+      - name: Retrieval/grounding benchmark (fails if a metric fell below the recorded floor)
+        run: python -m contextrag bench --check-baseline
       - name: Safety evaluation (fails on any unsupported claim approved or unsafe answer)
         run: python -m contextrag eval
 
@@ -32,3 +39,14 @@ jobs:
       - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - run: pip install -e ".[dev,api,models]"
       - run: pytest -q tests/test_models_local.py
+
+  audit:
+    # known-vulnerability scan of the runtime dependencies (no dev tools), resolved fresh from the extras
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[api,pdf,security,memory,postgres,qdrant,redis]" pip-audit
+      - run: pip-audit --local --skip-editable

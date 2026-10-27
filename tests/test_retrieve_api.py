@@ -326,3 +326,20 @@ def test_missing_database_is_logged_without_a_spurious_traceback(rag, monkeypatc
     post(TestClient(create_app(rag)), {"tenant_id": "acme", "query": QUESTION})
     [rec] = [r for r in caplog.records if r.name == "contextrag.retrieve"]
     assert not rec.exc_info
+
+
+def test_real_database_keeps_no_query_text_when_the_audit_is_set_to_omit(tenant_db, rag, pg_dsn, pg_app_dsn):
+    import dataclasses
+
+    import psycopg
+
+    rag.cfg = dataclasses.replace(rag.cfg, audit_question="omit")
+    with psycopg.connect(pg_dsn, autocommit=True) as admin:
+        admin.execute("DELETE FROM retrieval_audit")
+    c = TestClient(create_app(rag, tenant_db=tenant_db))
+    assert post(c, {"tenant_id": "acme", "query": QUESTION}).status_code == 200
+    with psycopg.connect(pg_app_dsn, autocommit=True) as raw:
+        with raw.transaction():
+            raw.execute("SELECT set_config('app.tenant', 'acme', true)")
+            stored = [q for (q,) in raw.execute("SELECT query FROM retrieval_audit").fetchall()]
+    assert stored == [f"[omitted: {len(QUESTION)} chars]"]

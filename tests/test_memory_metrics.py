@@ -46,6 +46,7 @@ class Blocking(ExtractiveSummarizer):
     """Holds every attempt until released, so a test can observe a job that is running."""
 
     def __init__(self):
+        super().__init__()  # without this every released attempt raised AttributeError and was silently retried
         self.entered = threading.Event()
         self.release = threading.Event()
 
@@ -122,8 +123,10 @@ def test_shutdown_cancels_unstarted_work_leaves_it_queued_and_recovery_resumes_i
         assert blocking.entered.wait(10)
         queued = schedule(w, "c1")  # waits behind the single worker
     finally:
-        blocking.release.set()
+        # Close first, release second. Releasing first lets the single worker finish c0 and start c1 before the shutdown
+        # cancels it, which made this test race.
         w.close(wait_running=False)  # cancels the queued job; the running attempt is left to finish or lease out
+        blocking.release.set()
     assert value(m, CANCELLED) == 1
     assert s.job_state(queued) == "queued"  # cancellation is not failure: the job survives in the store
 

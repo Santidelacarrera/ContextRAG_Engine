@@ -35,6 +35,7 @@ def main(argv: list[str] | None = None) -> int:
     k.add_argument("--role", choices=["reader", "admin", "ops"], default="reader")
     k.add_argument("--groups", default="", help="comma-separated ACL groups")
     k.add_argument("--add-to", type=Path, help="keys file to create/update (CONTEXTRAG_KEYS_FILE)")
+    k.add_argument("--expires-in-days", type=float, help="the key stops working after this many days (recommended)")
 
     x = sub.add_parser("erase", help="irreversibly delete ALL data of a tenant (documents, vectors, cache, audit)")
     x.add_argument("--tenant", required=True)
@@ -50,6 +51,26 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("memory-migrate", help="encrypt conversation rows written before MEMORY_DB was encrypted "
                                           "(needs MEMORY_DB and MASTER_KEY; idempotent, safe to re-run)")
+
+    bn = sub.add_parser("bench", help="retrieval + grounding benchmark on the versioned synthetic corpus; with "
+                                      "--check-baseline exit 1 if a metric fell below the recorded floor")
+    bn.add_argument("--out", help="write the full JSON report here")
+    bn.add_argument("--dataset", help="alternative dataset file in the same format")
+    bn.add_argument("--repeats", type=int, default=1, help="run each retrieval query this many times for latency")
+    bn.add_argument("--check-baseline", action="store_true")
+
+    ld = sub.add_parser("loadtest", help="in-process load benchmark (offline stack): latency percentiles and throughput at "
+                                         "several concurrency levels; a comparison tool, not a capacity claim")
+    ld.add_argument("--levels", default="1,4,8,16", help="comma-separated concurrency levels")
+    ld.add_argument("--requests", type=int, default=400, help="requests per level")
+    ld.add_argument("--seed", type=int, default=7)
+    ld.add_argument("--mixed-ingest-every", type=int, default=10, help="every Nth request is a re-ingest (0 = read-only only)")
+    ld.add_argument("--with-cache", action="store_true", help="keep the answer cache on (measures the cached path)")
+    ld.add_argument("--out", help="write the full JSON report here")
+
+    rk = sub.add_parser("rotate-key", help="re-encrypt data still under a previous master key (needs MASTER_KEY as the new "
+                                           "primary and MASTER_KEY_PREVIOUS; covers MEMORY_DB and QDRANT_URL)")
+    rk.add_argument("--dry-run", action="store_true", help="count what would be re-encrypted and change nothing")
 
     rg = sub.add_parser("ragas", help="LLM-judge evaluation (faithfulness, answer relevancy, context recall); needs "
                                       "RAGAS_PROVIDER and the provider key. Exit 1 if any judge call failed")
@@ -75,7 +96,10 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--json", action="store_true", help="print machine-readable results")
 
     args = ap.parse_args(argv)
-    logging.basicConfig(level=logging.WARNING if args.cmd == "eval" else logging.INFO, format="%(asctime)s %(name)s %(message)s", stream=sys.stderr)
+    from .core.redact import install_log_redaction
+
+    install_log_redaction()
+    logging.basicConfig(level=logging.WARNING if args.cmd in ("eval", "bench", "loadtest") else logging.INFO, format="%(asctime)s %(name)s %(message)s", stream=sys.stderr)
     csv = lambda v: tuple(x for x in v.split(",") if x)
 
     if args.cmd == "serve":
@@ -89,7 +113,15 @@ def main(argv: list[str] | None = None) -> int:
 
         from .api.auth import KeyStore, new_entry
 
-        key, digest, entry = new_entry(args.id, args.tenant, args.role, csv(args.groups))
+        from datetime import datetime, timedelta, timezone
+
+        expires = None
+        if args.expires_in_days is not None:
+            if args.expires_in_days <= 0:
+                print("keygen: --expires-in-days must be positive", file=sys.stderr)
+                return 2
+            expires = (datetime.now(timezone.utc) + timedelta(days=args.expires_in_days)).isoformat(timespec="seconds")
+        key, digest, entry = new_entry(args.id, args.tenant, args.role, csv(args.groups), expires_at=expires)
         KeyStore({digest: entry})  # validates the entry (e.g. tenant required for non-ops roles)
         if args.add_to:
             entries = json.loads(args.add_to.read_text()) if args.add_to.exists() else {}
@@ -119,6 +151,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "audit-purge":
         print(json.dumps({"purged": factory.from_env().purge_audit(args.older_than_days)}))
         return 0
+
+    if args.cmd == "loadtest":
+        return _run_loadtest(args)
+
+    if args.cmd == "rotate-key":
+        return _run_rotate_key(args)
+
+    if args.cmd == "bench":
+        return _run_bench(args)
 
     if args.cmd == "ragas":
         return _run_ragas(args)
@@ -197,6 +238,115 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  {r['threshold']:<8} {r['false_support_rate']:>12.1%} {r['recall']:>8.1%}")
             print(f"  recommended threshold (lowest with zero false supports): {sweep['recommended']}")
     return 1 if (vr.false_supports or rr.unsafe) else 0
+
+
+def _run_loadtest(args) -> int:
+    from .eval.load_bench import run_load
+
+    try:
+        levels = tuple(int(x) for x in args.levels.split(",") if x)
+        report = run_load(levels, args.requests, args.seed, args.mixed_ingest_every, with_cache=args.with_cache)
+    except ValueError as exc:
+        print(f"loadtest: {exc}", file=sys.stderr)
+        return 2
+    if args.out:
+        Path(args.out).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    print(report["caveat"])
+    for title, rows in (("read-only", report["read_only"]),
+                        ("mixed read/write", (report["mixed_read_write"] or {}).get("levels", []))):
+        print(f"\n{title}")
+        print(f"{'conc':>5s} {'req/s':>8s} {'p50 ms':>8s} {'p95 ms':>8s} {'p99 ms':>8s} {'errors':>7s}")
+        for r in rows:
+            lat = r["latency"] or {}
+            p99 = lat.get("p99_ms")
+            print(f"{r['concurrency']:5d} {r['throughput_per_second']:8.1f} {lat.get('p50_ms', float('nan')):8.2f} "
+                  f"{lat.get('p95_ms', float('nan')):8.2f} {('%.2f' % p99) if p99 is not None else 'n<100':>8s} "
+                  f"{r['outcomes']['error']:7d}")
+    print(f"\npeak RSS (whole process): {report['peak_rss_mb']} MB")
+    return 1 if any(r["outcomes"]["error"] for r in report["read_only"]) else 0
+
+
+def _run_rotate_key(args) -> int:
+    import os
+
+    from .core.security import TenantCipher
+
+    from .core.security import load_master_keys
+
+    try:
+        key, previous = load_master_keys()
+    except (ValueError, OSError) as exc:  # the message names the variable, never the key
+        print(f"rotate-key: {exc}", file=sys.stderr)
+        return 2
+    if not key or not previous:
+        print("rotate-key: set MASTER_KEY (or MASTER_KEY_FILE) for the new key and MASTER_KEY_PREVIOUS (or "
+              "MASTER_KEY_PREVIOUS_FILE) for the key(s) being retired", file=sys.stderr)
+        return 2
+    memory_path, qdrant_url = os.getenv("MEMORY_DB"), os.getenv("QDRANT_URL")
+    if not memory_path and not qdrant_url:
+        print("rotate-key: nothing to rotate; set MEMORY_DB and/or QDRANT_URL", file=sys.stderr)
+        return 2
+    cipher = TenantCipher(key, previous)
+    result: dict[str, object] = {"dry_run": args.dry_run}
+    try:
+        if memory_path:
+            from .memory.store import ConversationStore
+
+            store = ConversationStore(memory_path, cipher=cipher)
+            try:
+                result["memory"] = store.rekey(dry_run=args.dry_run)
+            finally:
+                store.close()
+        if qdrant_url:
+            from qdrant_client import QdrantClient
+
+            from .retrieval.vector_store import QdrantVectorStore
+
+            client = QdrantClient(url=qdrant_url, api_key=os.getenv("QDRANT_API_KEY") or None)
+            if not client.collection_exists("contextrag"):
+                print("rotate-key: the Qdrant collection 'contextrag' does not exist; refusing to create one", file=sys.stderr)
+                return 2
+            result["qdrant"] = QdrantVectorStore(1, client=client, cipher=cipher).rekey(dry_run=args.dry_run)
+    except Exception as exc:  # nothing is half-applied: each record is verified before it is replaced
+        print(f"rotate-key: stopped with {type(exc).__name__}; no record was left unreadable. Fix the cause and re-run.",
+              file=sys.stderr)
+        return 1
+    print(json.dumps(result))
+    return 0
+
+
+def _run_bench(args) -> int:
+    from .eval import retrieval_bench as B
+
+    if args.repeats < 1:
+        print("bench: --repeats must be >= 1", file=sys.stderr)
+        return 2
+    try:
+        report = B.run_benchmark(dataset=args.dataset or B.DATA_PATH, repeats=args.repeats)
+    except (OSError, KeyError, ValueError) as exc:
+        print(f"bench: {exc}", file=sys.stderr)
+        return 2
+    if args.out:
+        Path(args.out).write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"dataset v{report['dataset']['version']} sha256={report['dataset']['sha256'][:12]} "
+          f"({report['dataset']['documents']} docs, {report['dataset']['queries']} queries)  [{report['caveat']}]")
+    print(f"{'strategy':14s} {'R@1':>6s} {'R@5':>6s} {'R@10':>6s} {'MRR':>6s} {'nDCG@5':>7s} {'p50 ms':>8s} {'p95 ms':>8s}")
+    for name, r in report["retrieval"].items():
+        m = r["metrics"]["all"]
+        print(f"{name:14s} {m['recall@1']:6.3f} {m['recall@5']:6.3f} {m['recall@10']:6.3f} {m['mrr']:6.3f} "
+              f"{m['ndcg@5']:7.3f} {r['latency']['p50_ms']:8.3f} {r['latency']['p95_ms']:8.3f}")
+    print("grounding:", json.dumps(report["grounding"]["answerable"]), json.dumps(report["grounding"]["unanswerable"]))
+    if args.check_baseline:
+        try:
+            baseline = json.loads(B.BASELINE_PATH.read_text(encoding="utf-8"))
+            problems = B.regressions(report, baseline)
+        except (OSError, KeyError, ValueError) as exc:
+            print(f"bench: cannot check the baseline: {exc}", file=sys.stderr)
+            return 2
+        for p in problems:
+            print(f"REGRESSION {p}", file=sys.stderr)
+        return 1 if problems else 0
+    return 0
 
 
 def _run_ragas(args) -> int:

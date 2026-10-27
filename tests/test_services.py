@@ -102,7 +102,9 @@ def test_postgres_audit_persists_full_record(pg_dsn, pg_app_dsn):
     assert [r["status"] for r in rows] == ["fallback", "verified"]
     ok = rows[1]
     assert ok["user"] == "ana" and ok["confidence"] == a.confidence
-    assert ok["claims"][0]["evidence"]["text"] == a.claims[0].evidence.text  # jsonb round-trip
+    import hashlib
+
+    assert ok["claims"][0]["evidence"]["text_sha256"] == hashlib.sha256(a.claims[0].evidence.text.encode()).hexdigest()  # jsonb round-trip
     assert ok["sources"][0]["doc_id"] == "policy.md"
     assert len(audit.list("other")) == 1 and len(audit.list("acme", limit=1)) == 1
     n = audit.admin.execute("SELECT count(*) FROM answer_audit WHERE query_embedding IS NOT NULL").fetchone()[0]

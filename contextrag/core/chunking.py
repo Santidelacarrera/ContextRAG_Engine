@@ -153,7 +153,8 @@ def parse(text: str, kind: str) -> list[Segment]:
 # ---- chunking ----------------------------------------------------------------------------
 
 def _id(*parts: object) -> str:
-    return hashlib.sha1("|".join(map(str, parts)).encode()).hexdigest()[:16]
+    # identifiers, not secrets: usedforsecurity=False documents that and keeps the values stable across versions
+    return hashlib.sha1("|".join(map(str, parts)).encode(), usedforsecurity=False).hexdigest()[:16]
 
 
 def fingerprint(text: str, kind: str, source: str, acl: tuple[str, ...], cfg: Settings) -> str:

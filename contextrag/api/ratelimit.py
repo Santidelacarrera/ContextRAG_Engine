@@ -26,3 +26,21 @@ class RateLimiter:
                 return 0.0
             self._state[key] = (tokens, now)
             return (1.0 - tokens) / self.rate
+
+
+class ConcurrencyGate:
+    """Bounds how many requests of one kind run at once. A request that cannot get a slot within ``wait_seconds`` is
+    refused (the caller answers 503 with Retry-After) so that load turns into a clear, retryable signal, not an unbounded
+    queue of requests each holding memory."""
+
+    def __init__(self, limit: int, wait_seconds: float):
+        import threading
+
+        self.limit, self.wait_seconds = limit, wait_seconds
+        self._slots = threading.BoundedSemaphore(limit)
+
+    def acquire(self) -> bool:
+        return self._slots.acquire(timeout=self.wait_seconds)
+
+    def release(self) -> None:
+        self._slots.release()

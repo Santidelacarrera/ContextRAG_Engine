@@ -1,0 +1,26 @@
+{
+  "dataset_sha256": "b4f99fa5864dcc68647e9c596304163f0941ce2f24b335fd9c7326e220908f42",
+  "note": "Floors are measured values rounded down to 3 decimals, recorded from `python -m contextrag bench` on the offline stack (hashing embedder, lexical reranker/NLI, extractive generator) over the synthetic v1 corpus. A drop below a floor is a regression on this corpus; it is not evidence about production models or real documents. Latency is machine-dependent and deliberately not part of the baseline.",
+  "retrieval_floor": {
+    "bm25.recall@5": 0.975,
+    "bm25.mrr": 1.0,
+    "bm25.ndcg@5": 1.0,
+    "hybrid.recall@5": 0.939,
+    "hybrid.mrr": 0.991,
+    "hybrid.ndcg@5": 0.961,
+    "hybrid_rerank.recall@5": 0.971,
+    "hybrid_rerank.mrr": 1.0,
+    "hybrid_rerank.ndcg@5": 0.997
+  },
+  "grounding_floor": {
+    "answerable.verified_rate": 0.666,
+    "answerable.correct_rate": 0.666,
+    "answerable.citation_precision": 0.7,
+    "answerable.citation_coverage": 1.0,
+    "unanswerable.abstention_rate": 1.0
+  },
+  "grounding_ceiling": {
+    "answerable.verified_wrong_rate": 0.0,
+    "unanswerable.answered_as_supported_rate": 0.0
+  }
+}

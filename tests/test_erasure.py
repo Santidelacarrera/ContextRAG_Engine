@@ -63,7 +63,7 @@ def test_erase_tenant_removes_documents_cache_and_audit_but_not_other_tenants():
     r = seeded()
     assert r.ask(Q, tenant="acme").cached  # a cached answer exists
     out = r.erase_tenant("acme")
-    assert out == {"documents": 2, "audit_records": 2}
+    assert {k: out[k] for k in ("documents", "audit_records")} == {"documents": 2, "audit_records": 2}
     assert r.index.list_documents("acme") == [] and r.audit.list("acme") == []
     a = r.ask(Q, tenant="acme", groups=frozenset({"legal"}))
     assert a.status is Status.FALLBACK and not a.cached and a.sources == []  # nothing, not even from the cache
@@ -75,8 +75,9 @@ def test_erase_tenant_legal_hold_keeps_audit_and_is_idempotent():
     r = seeded()
     out = r.erase_tenant("acme", include_audit=False)
     assert out["audit_records"] == 0 and len(r.audit.list("acme")) == 1
-    assert r.erase_tenant("acme") == {"documents": 0, "audit_records": 1}
-    assert r.erase_tenant("never-existed") == {"documents": 0, "audit_records": 0}
+    res = r.erase_tenant("acme")  # one call: a second one would find nothing left to remove
+    assert {k: res[k] for k in ("documents", "audit_records")} == {"documents": 0, "audit_records": 1}
+    assert r.erase_tenant("never-existed")["documents"] == 0 and r.erase_tenant("never-existed")["audit_records"] == 0
     with pytest.raises(ValueError):
         r.erase_tenant("")
 
@@ -99,7 +100,7 @@ def test_audit_retention_purge():
     with pytest.raises(ValueError):
         r.purge_audit(-1)
     r.audit = None
-    assert r.purge_audit(1) == 0 and r.erase_tenant("x") == {"documents": 0, "audit_records": 0}
+    assert r.purge_audit(1) == 0 and r.erase_tenant("x")["audit_records"] == 0
 
 
 # ---- API -----------------------------------------------------------------------------------
@@ -116,7 +117,8 @@ def test_api_erasure_requires_explicit_confirmation():
     assert c.delete("/tenant", headers={**h, "X-Confirm-Tenant": "rival"}).status_code == 400
     assert len(c.get("/documents", headers=h).json()["documents"]) == 2  # nothing happened yet
     r = c.delete("/tenant", headers={**h, "X-Confirm-Tenant": "acme"})
-    assert r.status_code == 200 and r.json() == {"tenant": "acme", "documents": 2, "audit_records": 1}
+    body = r.json()
+    assert r.status_code == 200 and {k: body[k] for k in ("tenant", "documents", "audit_records")} == {"tenant": "acme", "documents": 2, "audit_records": 1}
     assert c.get("/documents", headers=h).json()["documents"] == []
     assert len(c.get("/documents", headers={"X-Tenant": "rival"}).json()["documents"]) == 2
     kept = c.delete("/tenant?keep_audit=true", headers={"X-Tenant": "rival", "X-Confirm-Tenant": "rival"}).json()
@@ -151,6 +153,8 @@ def test_cli_erase_requires_yes(capsys):
 
     assert main(["erase", "--tenant", "acme"]) == 2
     assert main(["erase", "--tenant", "acme", "--yes"]) == 0
-    assert json.loads(capsys.readouterr().out) == {"documents": 0, "audit_records": 0}
+    out = json.loads(capsys.readouterr().out)
+    assert {k: out[k] for k in ("documents", "audit_records")} == {"documents": 0, "audit_records": 0}
+    assert out["conversation_turns"] == 0  # erasure also removes the tenant's conversations
     assert main(["audit-purge", "--older-than-days", "30"]) == 0
     assert json.loads(capsys.readouterr().out) == {"purged": 0}

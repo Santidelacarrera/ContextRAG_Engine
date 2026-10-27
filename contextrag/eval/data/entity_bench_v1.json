@@ -1,0 +1,529 @@
+{
+ "version": 1,
+ "seed": 23,
+ "synthetic": true,
+ "documents": [
+  {
+   "doc_id": "ent_0.md",
+   "text": "# Industrias Valdivia S.A.\n\nIndustrias Valdivia S.A. tiene su domicilio en Valparaíso.\n\nEl capital social de Industrias Valdivia S.A. es de 898 millones de pesos.\n",
+   "acl": []
+  },
+  {
+   "doc_id": "contrato_0.md",
+   "acl": [],
+   "text": "# Contrato marco 0\n\nEn el contrato marco de servicios, Industrias Valdivia S.A. (en adelante, «IVSA») se obliga a prestar los servicios descritos en el anexo técnico dentro de los plazos pactados.\n"
+  },
+  {
+   "doc_id": "ent_1.md",
+   "text": "# Comercial Pehuén Ltda.\n\nComercial Pehuén Ltda. tiene su domicilio en Concepción.\n\nEl capital social de Comercial Pehuén Ltda. es de 396 millones de pesos.\n",
+   "acl": []
+  },
+  {
+   "doc_id": "contrato_1.md",
+   "acl": [],
+   "text": "# Contrato marco 1\n\nEn el contrato marco de servicios, Comercial Pehuén Ltda. (en adelante, «Pehuén») se obliga a prestar los servicios descritos en el anexo técnico dentro de los plazos pactados.\n"
+  },
+  {
+   "doc_id": "ent_2.md",
+   "text": "# Agrícola Los Robles S.A.\n\nAgrícola Los Robles S.A. tiene su domicilio en Temuco.\n\nEl capital social de Agrícola Los Robles S.A. es de 949 millones de pesos.\n",
+   "acl": []
+  },
+  {
+   "doc_id": "contrato_2.md",
+   "acl": [],
+   "text": "# Contrato marco 2\n\nEn el contrato marco de servicios, Agrícola Los Robles S.A. (en adelante, «Los Robles») se obliga a prestar los servicios descritos en el anexo técnico dentro de los plazos pactados.\n"
+  },
+  {
+   "doc_id": "ent_3.md",
+   "text": "# Transportes Austral SpA\n\nTransportes Austral SpA tiene su domicilio en La Serena.\n\nEl capital social de Transportes Austral SpA es de 185 millones de pesos.\n",
+   "acl": []
+  },
+  {
+   "doc_id": "contrato_3.md",
+   "acl": [],
+   "text": "# Contrato marco 3\n\nEn el contrato marco de servicios, Transportes Austral SpA (en adelante, «TASA») se obliga a prestar los servicios descritos en el anexo técnico dentro de los plazos pactados.\n"
+  },
+  {
+   "doc_id": "ent_4.md",
+   "text": "# Inmobiliaria Cordillera S.A.\n\nInmobiliaria Cordillera S.A. tiene su domicilio en Rancagua.\n\nEl capital social de Inmobiliaria Cordillera S.A. es de 117 millones de pesos.\n\nInmobiliaria Cordillera S.A. (también conocido como Cordillera) es una sociedad anónima cerrada.\n",
+   "acl": []
+  },
+  {
+   "doc_id": "ent_5.md",
+   "text": "# Servicios Mapocho Ltda.\n\nServicios Mapocho Ltda. tiene su domicilio en Talca.\n\nEl capital social de Servicios Mapocho Ltda. es de 706 millones de pesos.\n\nServicios Mapocho Ltda. (también conocido como Mapocho) es una sociedad anónima cerrada.\n",
+   "acl": []
+  },
+  {
+   "doc_id": "ent_6.md",
+   "text": "# Pesquera Caleta Azul S.A.\n\nPesquera Caleta Azul S.A. tiene su domicilio en Antofagasta.\n\nEl capital social de Pesquera Caleta Azul S.A. es de 414 millones de pesos.\n\nPesquera Caleta Azul S.A. (también conocido como Caleta Azul) es una sociedad anónima cerrada.\n",
+   "acl": []
+  },
+  {
+   "doc_id": "ent_7.md",
+   "text": "# Constructora Andes Sur SpA\n\nConstructora Andes Sur SpA tiene su domicilio en Osorno.\n\nEl capital social de Constructora Andes Sur SpA es de 533 millones de pesos.\n\nConstructora Andes Sur SpA (también conocido como CAS) es una sociedad anónima cerrada.\n",
+   "acl": []
+  },
+  {
+   "doc_id": "atlas_norte.md",
+   "acl": [],
+   "text": "# Proyecto Atlas Norte\n\nProyecto Atlas Norte (también conocido como Atlas) tiene su sede en Temuco.\n\nEl presupuesto del Proyecto Atlas Norte es de 120 millones de pesos.\n"
+  },
+  {
+   "doc_id": "atlas_sur.md",
+   "acl": [],
+   "text": "# Proyecto Atlas Sur\n\nProyecto Atlas Sur (también conocido como Atlas) tiene su sede en Puerto Montt.\n\nEl presupuesto del Proyecto Atlas Sur es de 340 millones de pesos.\n"
+  },
+  {
+   "doc_id": "halvorsen.md",
+   "acl": [],
+   "text": "# Halvorsen Group\n\nHalvorsen Group tiene su domicilio en Valdivia.\n\nEl capital social de Halvorsen Group es de 900 millones de pesos.\n"
+  },
+  {
+   "doc_id": "astilleros.md",
+   "acl": [],
+   "text": "# Astilleros Magallanes Ltda.\n\nAstilleros Magallanes Ltda. tiene su domicilio en Punta Arenas.\n"
+  },
+  {
+   "doc_id": "prensa.md",
+   "acl": [],
+   "text": "# Nota de prensa\n\nLa Naviera, nombre con que todos conocen a Astilleros Magallanes Ltda., anunció una ampliación de sus astilleros durante el próximo año.\n"
+  },
+  {
+   "doc_id": "mercurio_a.md",
+   "acl": [],
+   "text": "# Mercurio S.A.\n\nMercurio S.A. se dedica a transportes marítimos. Mercurio S.A. tiene su domicilio en Arica.\n"
+  },
+  {
+   "doc_id": "mercurio_b.md",
+   "acl": [],
+   "text": "# Mercurio S.A.\n\nMercurio S.A. se dedica a seguros generales. Mercurio S.A. tiene su domicilio en Iquique.\n"
+  },
+  {
+   "doc_id": "reservado.md",
+   "acl": [
+    "caso-x"
+   ],
+   "text": "# Sociedad Reservada S.A.\n\nSociedad Reservada S.A. (en adelante, «SR») tiene su domicilio en Osorno.\n\nEl capital social de Sociedad Reservada S.A. es de 50 millones de pesos.\n"
+  }
+ ],
+ "queries": [
+  {
+   "id": "can01",
+   "kind": "canonical",
+   "question": "¿Cuál es el domicilio de Industrias Valdivia S.A.?",
+   "expected": "answer",
+   "expect": "Valparaíso",
+   "relevant_doc": "ent_0.md",
+   "groups": []
+  },
+  {
+   "id": "can02",
+   "kind": "canonical",
+   "question": "¿Cuál es el domicilio de Comercial Pehuén Ltda.?",
+   "expected": "answer",
+   "expect": "Concepción",
+   "relevant_doc": "ent_1.md",
+   "groups": []
+  },
+  {
+   "id": "can03",
+   "kind": "canonical",
+   "question": "¿Cuál es el domicilio de Agrícola Los Robles S.A.?",
+   "expected": "answer",
+   "expect": "Temuco",
+   "relevant_doc": "ent_2.md",
+   "groups": []
+  },
+  {
+   "id": "can04",
+   "kind": "canonical",
+   "question": "¿Cuál es el domicilio de Transportes Austral SpA?",
+   "expected": "answer",
+   "expect": "La Serena",
+   "relevant_doc": "ent_3.md",
+   "groups": []
+  },
+  {
+   "id": "can05",
+   "kind": "canonical",
+   "question": "¿Cuál es el domicilio de Inmobiliaria Cordillera S.A.?",
+   "expected": "answer",
+   "expect": "Rancagua",
+   "relevant_doc": "ent_4.md",
+   "groups": []
+  },
+  {
+   "id": "can06",
+   "kind": "canonical",
+   "question": "¿Cuál es el domicilio de Servicios Mapocho Ltda.?",
+   "expected": "answer",
+   "expect": "Talca",
+   "relevant_doc": "ent_5.md",
+   "groups": []
+  },
+  {
+   "id": "can07",
+   "kind": "canonical",
+   "question": "¿Cuál es el domicilio de Pesquera Caleta Azul S.A.?",
+   "expected": "answer",
+   "expect": "Antofagasta",
+   "relevant_doc": "ent_6.md",
+   "groups": []
+  },
+  {
+   "id": "can08",
+   "kind": "canonical",
+   "question": "¿Cuál es el domicilio de Constructora Andes Sur SpA?",
+   "expected": "answer",
+   "expect": "Osorno",
+   "relevant_doc": "ent_7.md",
+   "groups": []
+  },
+  {
+   "id": "ali09",
+   "kind": "alias_other_doc",
+   "question": "¿Cuál es el capital social de IVSA?",
+   "expected": "answer",
+   "expect": "898 millones",
+   "relevant_doc": "ent_0.md",
+   "groups": []
+  },
+  {
+   "id": "ali10",
+   "kind": "alias_other_doc",
+   "question": "¿Cuál es el capital social de Pehuén?",
+   "expected": "answer",
+   "expect": "396 millones",
+   "relevant_doc": "ent_1.md",
+   "groups": []
+  },
+  {
+   "id": "ali11",
+   "kind": "alias_other_doc",
+   "question": "¿Cuál es el capital social de Los Robles?",
+   "expected": "answer",
+   "expect": "949 millones",
+   "relevant_doc": "ent_2.md",
+   "groups": []
+  },
+  {
+   "id": "ali12",
+   "kind": "alias_other_doc",
+   "question": "¿Cuál es el capital social de TASA?",
+   "expected": "answer",
+   "expect": "185 millones",
+   "relevant_doc": "ent_3.md",
+   "groups": []
+  },
+  {
+   "id": "ali13",
+   "kind": "alias_same_doc",
+   "question": "¿Dónde tiene su domicilio Cordillera?",
+   "expected": "answer",
+   "expect": "Rancagua",
+   "relevant_doc": "ent_4.md",
+   "groups": []
+  },
+  {
+   "id": "ali14",
+   "kind": "alias_same_doc",
+   "question": "¿Dónde tiene su domicilio Mapocho?",
+   "expected": "answer",
+   "expect": "Talca",
+   "relevant_doc": "ent_5.md",
+   "groups": []
+  },
+  {
+   "id": "ali15",
+   "kind": "alias_same_doc",
+   "question": "¿Dónde tiene su domicilio Caleta Azul?",
+   "expected": "answer",
+   "expect": "Antofagasta",
+   "relevant_doc": "ent_6.md",
+   "groups": []
+  },
+  {
+   "id": "ali16",
+   "kind": "alias_same_doc",
+   "question": "¿Dónde tiene su domicilio CAS?",
+   "expected": "answer",
+   "expect": "Osorno",
+   "relevant_doc": "ent_7.md",
+   "groups": []
+  },
+  {
+   "id": "unk17",
+   "kind": "unknown",
+   "question": "¿Cuál es el domicilio de Metalúrgica Quillota Ltda.?",
+   "expected": "abstain",
+   "expect": null,
+   "relevant_doc": null,
+   "groups": []
+  },
+  {
+   "id": "unk18",
+   "kind": "unknown",
+   "question": "¿Cuál es el domicilio de Panificadora Ñuñoa S.A.?",
+   "expected": "abstain",
+   "expect": null,
+   "relevant_doc": null,
+   "groups": []
+  },
+  {
+   "id": "unk19",
+   "kind": "unknown",
+   "question": "¿Cuál es el domicilio de Textiles Arica SpA?",
+   "expected": "abstain",
+   "expect": null,
+   "relevant_doc": null,
+   "groups": []
+  },
+  {
+   "id": "unk20",
+   "kind": "unknown",
+   "question": "¿Cuál es el domicilio de Vitivinícola Colchagua S.A.?",
+   "expected": "abstain",
+   "expect": null,
+   "relevant_doc": null,
+   "groups": []
+  },
+  {
+   "id": "unk21",
+   "kind": "unknown",
+   "question": "¿Cuál es el domicilio de Aserraderos Chiloé Ltda.?",
+   "expected": "abstain",
+   "expect": null,
+   "relevant_doc": null,
+   "groups": []
+  },
+  {
+   "id": "unk22",
+   "kind": "unknown",
+   "question": "¿Cuál es el domicilio de Minera Copiapó SpA?",
+   "expected": "abstain",
+   "expect": null,
+   "relevant_doc": null,
+   "groups": []
+  },
+  {
+   "id": "unk23",
+   "kind": "unknown",
+   "question": "¿Cuál es el domicilio de Astilleros Talcahuano S.A.?",
+   "expected": "abstain",
+   "expect": null,
+   "relevant_doc": null,
+   "groups": []
+  },
+  {
+   "id": "unk24",
+   "kind": "unknown",
+   "question": "¿Cuál es el domicilio de Cervecería Valdés Ltda.?",
+   "expected": "abstain",
+   "expect": null,
+   "relevant_doc": null,
+   "groups": []
+  },
+  {
+   "id": "dec25",
+   "kind": "decoy",
+   "question": "¿Cuál es el capital social de Halvorsen Corp?",
+   "expected": "abstain",
+   "expect": null,
+   "relevant_doc": null,
+   "groups": []
+  },
+  {
+   "id": "dec26",
+   "kind": "decoy",
+   "question": "¿Cuál es el capital social de Halvorsen Inc?",
+   "expected": "abstain",
+   "expect": null,
+   "relevant_doc": null,
+   "groups": []
+  },
+  {
+   "id": "dec27",
+   "kind": "decoy",
+   "question": "¿Cuál es el capital social de Halverson Group?",
+   "expected": "abstain",
+   "expect": null,
+   "relevant_doc": null,
+   "groups": []
+  },
+  {
+   "id": "dec28",
+   "kind": "decoy",
+   "question": "¿Cuál es el capital social de Halvorsen Grupo?",
+   "expected": "abstain",
+   "expect": null,
+   "relevant_doc": null,
+   "groups": []
+  },
+  {
+   "id": "dec29",
+   "kind": "decoy",
+   "question": "¿Cuál es el capital social de Halvorsen Group Chile?",
+   "expected": "abstain",
+   "expect": null,
+   "relevant_doc": null,
+   "groups": []
+  },
+  {
+   "id": "dec30",
+   "kind": "decoy",
+   "question": "¿Cuál es el capital social de Halvorsen Holdings?",
+   "expected": "abstain",
+   "expect": null,
+   "relevant_doc": null,
+   "groups": []
+  },
+  {
+   "id": "dec31",
+   "kind": "decoy_control",
+   "question": "¿Cuál es el capital social de Halvorsen Group?",
+   "expected": "answer",
+   "expect": "900 millones",
+   "relevant_doc": "halvorsen.md",
+   "groups": []
+  },
+  {
+   "id": "dec32",
+   "kind": "decoy_control",
+   "question": "¿Dónde tiene su domicilio Halvorsen Group?",
+   "expected": "answer",
+   "expect": "Valdivia",
+   "relevant_doc": "halvorsen.md",
+   "groups": []
+  },
+  {
+   "id": "amb33",
+   "kind": "ambiguous",
+   "question": "¿Dónde tiene su sede Atlas?",
+   "expected": "clarify",
+   "expect": null,
+   "relevant_doc": null,
+   "groups": []
+  },
+  {
+   "id": "amb34",
+   "kind": "ambiguous",
+   "question": "¿Cuál es el presupuesto de Atlas?",
+   "expected": "clarify",
+   "expect": null,
+   "relevant_doc": null,
+   "groups": []
+  },
+  {
+   "id": "amb35",
+   "kind": "ambiguous",
+   "question": "¿Qué presupuesto tiene Atlas?",
+   "expected": "clarify",
+   "expect": null,
+   "relevant_doc": null,
+   "groups": []
+  },
+  {
+   "id": "amb36",
+   "kind": "ambiguous",
+   "question": "¿En qué ciudad está Atlas?",
+   "expected": "clarify",
+   "expect": null,
+   "relevant_doc": null,
+   "groups": []
+  },
+  {
+   "id": "amb37",
+   "kind": "ambiguous",
+   "question": "¿Cuánto cuesta Atlas?",
+   "expected": "clarify",
+   "expect": null,
+   "relevant_doc": null,
+   "groups": []
+  },
+  {
+   "id": "res38",
+   "kind": "restricted_denied",
+   "question": "¿Dónde tiene su domicilio SR?",
+   "expected": "abstain",
+   "expect": null,
+   "relevant_doc": null,
+   "groups": []
+  },
+  {
+   "id": "res39",
+   "kind": "restricted_denied",
+   "question": "¿Cuál es el capital social de Sociedad Reservada S.A.?",
+   "expected": "abstain",
+   "expect": null,
+   "relevant_doc": null,
+   "groups": []
+  },
+  {
+   "id": "res40",
+   "kind": "restricted_denied",
+   "question": "¿Cuál es el domicilio de SR?",
+   "expected": "abstain",
+   "expect": null,
+   "relevant_doc": null,
+   "groups": []
+  },
+  {
+   "id": "res41",
+   "kind": "restricted_allowed",
+   "question": "¿Dónde tiene su domicilio SR?",
+   "expected": "answer",
+   "expect": "Osorno",
+   "relevant_doc": "reservado.md",
+   "groups": [
+    "caso-x"
+   ]
+  },
+  {
+   "id": "res42",
+   "kind": "restricted_allowed",
+   "question": "¿Cuál es el capital social de Sociedad Reservada S.A.?",
+   "expected": "answer",
+   "expect": "50 millones",
+   "relevant_doc": "reservado.md",
+   "groups": [
+    "caso-x"
+   ]
+  },
+  {
+   "id": "lim43",
+   "kind": "limit_alias_form",
+   "question": "¿Dónde tiene su domicilio la Naviera?",
+   "expected": "answer",
+   "expect": "Punta Arenas",
+   "relevant_doc": "astilleros.md",
+   "groups": []
+  },
+  {
+   "id": "lim44",
+   "kind": "limit_homonym",
+   "question": "¿Dónde tiene su domicilio Mercurio S.A.?",
+   "expected": "clarify",
+   "expect": null,
+   "relevant_doc": null,
+   "groups": []
+  },
+  {
+   "id": "lim45",
+   "kind": "limit_attribute",
+   "question": "¿Cuál es el RUT de Industrias Valdivia S.A.?",
+   "expected": "abstain",
+   "expect": null,
+   "relevant_doc": null,
+   "groups": []
+  },
+  {
+   "id": "lim46",
+   "kind": "limit_attribute",
+   "question": "¿Quién es el gerente general de Comercial Pehuén Ltda.?",
+   "expected": "abstain",
+   "expect": null,
+   "relevant_doc": null,
+   "groups": []
+  }
+ ]
+}

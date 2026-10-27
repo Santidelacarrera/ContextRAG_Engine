@@ -21,11 +21,11 @@ def _opt_float(v: str | None) -> float | None:
     return float(v) if v not in (None, "") else None
 
 
-def offline(settings: Settings | None = None, llm=None) -> ContextRAG:
+def offline(settings: Settings | None = None, llm=None, *, tracer=None) -> ContextRAG:
     """Self-contained stack: hashing embeddings, in-memory stores, lexical rerank/NLI, extractive LLM."""
     return ContextRAG(index=HybridIndex(InMemoryVectorStore()), embedder=HashingEmbedder(),
                       reranker=LexicalReranker(), llm=llm or ExtractiveLLM(), nli=LexicalEntailment(),
-                      audit=InMemoryAudit(), cache=InMemoryCache(), settings=settings)
+                      audit=InMemoryAudit(), cache=InMemoryCache(), settings=settings, tracer=tracer)
 
 
 def from_env() -> ContextRAG:
@@ -40,12 +40,25 @@ def from_env() -> ContextRAG:
     env = os.getenv
     cfg = Settings.from_env()
 
+    from .core.security import TenantCipher
+
+    from .core.security import load_master_keys
+
+    try:
+        master_key, previous = load_master_keys()  # MASTER_KEY or MASTER_KEY_FILE; refuses unsafe file permissions
+    except (ValueError, OSError) as exc:  # the startup contract is RuntimeError; the message names no key
+        raise RuntimeError(str(exc)) from None
+    cipher = TenantCipher(master_key, previous) if master_key else None
+
     cache: Cache = InMemoryCache()
     redis_url = env("REDIS_URL")
     if redis_url:
-        from .core.cache import RedisCache
+        from .core.cache import EncryptedCache, RedisCache, ResilientCache
 
         cache = RedisCache(redis_url)
+        if cipher is not None:  # answers and evidence must not sit in Redis in the clear when a key is configured
+            cache = EncryptedCache(cache, cipher)
+        cache = ResilientCache(cache)  # outermost: a Redis outage degrades to "no cache" instead of failing requests
 
     embedder: Embedder
     if env("EMBEDDER", "hashing") == "bge":
@@ -56,17 +69,13 @@ def from_env() -> ContextRAG:
     else:
         embedder = HashingEmbedder()
 
-    from .core.security import TenantCipher
-
-    master_key = env("MASTER_KEY")
-    cipher = TenantCipher(master_key.encode()) if master_key else None
     store: VectorStore
     if env("QDRANT_URL") or cipher:
         from qdrant_client import QdrantClient
 
         from .retrieval.vector_store import QdrantVectorStore
 
-        client = QdrantClient(url=env("QDRANT_URL")) if env("QDRANT_URL") else None
+        client = QdrantClient(url=env("QDRANT_URL"), api_key=env("QDRANT_API_KEY") or None) if env("QDRANT_URL") else None
         store = QdrantVectorStore(embedder.dim, client=client, cipher=cipher)
     else:
         store = InMemoryVectorStore()
@@ -93,7 +102,8 @@ def from_env() -> ContextRAG:
     if env("NLI", "lexical") == "deberta":
         from .verification.nli_verifier import DebertaNLI
 
-        nli = DebertaNLI(env("NLI_MODEL") or "MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli")
+        nli = DebertaNLI(env("NLI_MODEL") or "MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli",
+                         revision=env("NLI_MODEL_REVISION") or None)
     else:
         nli = LexicalEntailment()
 

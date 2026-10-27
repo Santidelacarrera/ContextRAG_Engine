@@ -22,6 +22,34 @@ def is_abbreviation(word: str) -> bool:
     return w in ABBREVIATIONS
 
 
+# Company-form suffixes ("S.A.", "Ltda.", "SpA"). They are abbreviations *and* can end a sentence, so unlike "Dr." they
+# only keep the sentence going when what follows starts in lower case or with a digit ("...Valdivia S.A. es de 898...").
+CORPORATE_SUFFIXES = frozenset("s.a s.a.s s.p.a spa ltda ltd cia cía hnos s.l s.r.l eirl e.i.r.l".split())
+
+
+def _ends_with_corporate_suffix(segment: str) -> bool:
+    m = re.search(r"([\w.]+)\.$", segment.rstrip())
+    return m is not None and m.group(1).lower().rstrip(".") in CORPORATE_SUFFIXES
+
+
+_CORPORATE_CANDIDATE = re.compile(r"\b([A-Za-zÁÉÍÓÚÑÜáéíóúñü][\w.]{0,10}?)\.(?=\s+[\[\"'(¿¡«“]*[a-záéíóúñü0-9])")
+
+
+def protect_corporate_suffixes(text: str) -> str:
+    """For analysis that tokenises punctuation: drop the full stops of a company-form suffix that a sentence continues
+    after ("Valdivia S.A. es de ..." becomes "Valdivia SA es de ..."), so they are not read as sentence ends. Internal
+    only; text shown to a user is never rewritten."""
+    def fix(m: re.Match[str]) -> str:
+        return m.group(1).replace(".", "") if m.group(1).lower().rstrip(".") in CORPORATE_SUFFIXES else m.group(0)
+
+    return _CORPORATE_CANDIDATE.sub(fix, text)
+
+
+def _continues_in_lower_case(text: str, pos: int) -> bool:
+    m = re.match(r"[\[\"'(¿¡«“]*(\w)", text[pos : pos + 6])
+    return m is not None and (m.group(1).islower() or m.group(1).isdigit())
+
+
 def _ends_with_abbreviation(segment: str) -> bool:
     m = re.search(r"([\w.]+)\.$", segment.rstrip())
     return m is not None and is_abbreviation(m.group(1))
@@ -52,6 +80,9 @@ def split_sentences(text: str, base: int = 0) -> list[tuple[str, int, int]]:
     for m in list(_SENT_END.finditer(text)) + [None]:
         if m and "\n" not in m.group() and _ends_with_abbreviation(text[pos : m.start()]):
             continue  # "Dr. Smith", "e.g. this": the period does not end the sentence
+        if (m and "\n" not in m.group() and _ends_with_corporate_suffix(text[pos : m.start()])
+                and _continues_in_lower_case(text, m.end())):
+            continue  # "Valdivia S.A. es de ...": a company form, and the sentence goes on
         end = m.start() if m else len(text)
         seg = text[pos:end]
         stripped = seg.strip()

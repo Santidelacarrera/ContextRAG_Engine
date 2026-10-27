@@ -1,6 +1,7 @@
 """Audit trail of every query: question, verdict, per-claim evidence coordinates and sources."""
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import threading
@@ -19,20 +20,47 @@ log = logging.getLogger("contextrag.audit")
 TENANT_SETTING = "app.tenant"
 
 
-def record_of(tenant: str, user: str | None, answer: Answer) -> dict:
+def _claim_record(c) -> dict:
+    """A claim without the text of its evidence. The audit keeps where the evidence is (document, offsets, page) and a
+    digest of its text, which is enough to prove what was cited. The text itself is left in the document: when the
+    document is deleted, the audit no longer holds its content."""
+    d = asdict(c)
+    if d["evidence"] is not None:
+        text = d["evidence"].pop("text")
+        d["evidence"]["text_sha256"] = hashlib.sha256(text.encode()).hexdigest()
+        d["evidence"]["text_chars"] = len(text)
+    return d
+
+
+def _claim_text(record: dict, mode: str) -> dict:
+    """A claim's sentence repeats the answer, so it follows the answer's mode: under "omit" only its length is kept."""
+    if mode != "full":
+        record["claim"] = audit_text(record.get("claim"), mode)
+    return record
+
+
+def audit_text(text: str | None, mode: str) -> str:
+    """The text itself when the mode keeps it; otherwise only its length, so the row still says a query happened."""
+    if mode == "full":
+        return text or ""
+    return f"[omitted: {len(text or '')} chars]"
+
+
+def record_of(tenant: str, user: str | None, answer: Answer, *, question_mode: str = "full",
+              answer_mode: str = "full") -> dict:
     return {
         "id": str(uuid.uuid4()),
         "ts": time.time(),
         "tenant": tenant,
         "user": user,
-        "question": answer.question,
+        "question": audit_text(answer.question, question_mode),
         "status": answer.status.value,
-        "answer": answer.text,
+        "answer": audit_text(answer.text, answer_mode),
         "confidence": answer.confidence,
         "attempts": answer.attempts,
         "reason": answer.reason,
         "cached": answer.cached,
-        "claims": [asdict(c) for c in answer.claims],
+        "claims": [_claim_text(_claim_record(c), answer_mode) for c in answer.claims],
         "sources": [{"index": c.index, "doc_id": c.parent.doc_id, "source": c.parent.source,
                      "start": c.parent.start, "end": c.parent.end, "page": c.parent.page,
                      "section": c.parent.section, "score": c.score} for c in answer.sources],
@@ -200,10 +228,15 @@ class PostgresAudit:
         cast = "%s::vector" if self.has_vector else "%s"
         self.ensure_partition(record["ts"])
         with self._as_tenant(record["tenant"]) as conn:
-            conn.execute(
-                f"""INSERT INTO answer_audit (id, ts, tenant, user_id, question, status, answer, confidence,
+            from psycopg import sql
+
+            # The cast is composed as SQL from one of two fixed fragments; every value is a bound parameter.
+            stmt = sql.SQL("""INSERT INTO answer_audit (id, ts, tenant, user_id, question, status, answer, confidence,
                         attempts, reason, cached, claims, sources, query_embedding)
-                    VALUES (%s, to_timestamp(%s), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, {cast})""",
+                    VALUES (%s, to_timestamp(%s), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, {cast})""").format(
+                cast=sql.SQL(cast))
+            conn.execute(
+                stmt,
                 (record["id"], record["ts"], record["tenant"], record["user"], record["question"], record["status"],
                  record["answer"], record["confidence"], record["attempts"], record["reason"], record["cached"],
                  json.dumps(record["claims"]), json.dumps(record["sources"]), emb))

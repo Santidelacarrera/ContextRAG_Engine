@@ -49,6 +49,27 @@ MEMORY_ORIGINS = ("user_stated", "model_inferred")
 JOB_STATES = ("queued", "running", "done", "failed")
 MAX_TURN_CHARS = 20_000
 MIGRATION_BATCH = 200
+# Statements for the migration and rekey passes, one literal per table. The table is the dictionary key, never
+# interpolated into SQL text, so no statement is built at run time.
+_PLAIN_ROWS = {
+    "turns": "SELECT rowid, tenant, conversation_id, seq, content FROM turns WHERE encrypted = 0 ORDER BY rowid LIMIT ?",
+    "memories": "SELECT rowid, tenant, conversation_id, memory_id, content FROM memories WHERE encrypted = 0 "
+                "ORDER BY rowid LIMIT ?",
+}
+_ENCRYPTED_ROWS = {
+    "turns": "SELECT rowid, tenant, conversation_id, seq, content FROM turns WHERE encrypted = 1 AND rowid > ? "
+             "ORDER BY rowid LIMIT ?",
+    "memories": "SELECT rowid, tenant, conversation_id, memory_id, content FROM memories WHERE encrypted = 1 "
+                "AND rowid > ? ORDER BY rowid LIMIT ?",
+}
+_ENCRYPT_ROW = {
+    "turns": "UPDATE turns SET content = ?, encrypted = 1 WHERE rowid = ?",
+    "memories": "UPDATE memories SET content = ?, encrypted = 1 WHERE rowid = ?",
+}
+_REWRITE_ROW = {
+    "turns": "UPDATE turns SET content = ? WHERE rowid = ?",
+    "memories": "UPDATE memories SET content = ? WHERE rowid = ?",
+}
 
 
 class ConversationNotFound(LookupError):
@@ -121,6 +142,7 @@ CREATE TABLE IF NOT EXISTS turns (
     tenant TEXT NOT NULL, conversation_id TEXT NOT NULL, seq INTEGER NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
     content TEXT NOT NULL, encrypted INTEGER NOT NULL DEFAULT 0 CHECK (encrypted IN (0, 1)),
+    cites TEXT NOT NULL DEFAULT '[]',
     created_at REAL NOT NULL,
     PRIMARY KEY (tenant, conversation_id, seq));
 CREATE TABLE IF NOT EXISTS memories (
@@ -170,6 +192,10 @@ class ConversationStore:
                 if "encrypted" not in cols:
                     db.execute(f"ALTER TABLE {table} ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0 "
                                "CHECK (encrypted IN (0, 1))")
+            # provenance: the documents an assistant turn was built from (its excerpts may be in the text)
+            cols = {r[1] for r in db.execute("PRAGMA table_info(turns)").fetchall()}
+            if "cites" not in cols:
+                db.execute("ALTER TABLE turns ADD COLUMN cites TEXT NOT NULL DEFAULT '[]'")
 
     @property
     def encrypted(self) -> bool:
@@ -228,7 +254,7 @@ class ConversationStore:
         return self._conversation(tenant, conversation_id)["version"]
 
     def append_turn(self, tenant: str, conversation_id: str, role: str, content: str, *,
-                    expected_version: int | None = None) -> int:
+                    expected_version: int | None = None, cites: Sequence[str] = ()) -> int:
         if role not in ROLES:
             raise ValueError(f"role must be one of {ROLES}")
         content = content.strip()
@@ -244,9 +270,10 @@ class ConversationStore:
                 raise VersionConflict(expected_version, current)
             seq = current + 1
             stored, encrypted = self._store_text(tenant, _label("turn", conversation_id, seq), content)
-            db.execute("INSERT INTO turns (tenant, conversation_id, seq, role, content, encrypted, created_at) "
-                       "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       (tenant, conversation_id, seq, role, stored, encrypted, self._clock()))
+            doc_ids = sorted({str(c)[:512] for c in cites})
+            db.execute("INSERT INTO turns (tenant, conversation_id, seq, role, content, encrypted, cites, created_at) "
+                       "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                       (tenant, conversation_id, seq, role, stored, encrypted, json.dumps(doc_ids), self._clock()))
             db.execute("UPDATE conversations SET version = ? WHERE tenant = ? AND conversation_id = ?",
                        (seq, tenant, conversation_id))
         return seq
@@ -440,9 +467,37 @@ class ConversationStore:
     def delete_conversation(self, tenant: str, conversation_id: str) -> None:
         """Erasure: removes the conversation, its turns, memories and jobs for this tenant."""
         with self._tx() as db:
-            for table in ("memories", "compaction_jobs", "turns"):
-                db.execute(f"DELETE FROM {table} WHERE tenant = ? AND conversation_id = ?", (tenant, conversation_id))
+            db.execute("DELETE FROM memories WHERE tenant = ? AND conversation_id = ?", (tenant, conversation_id))
+            db.execute("DELETE FROM compaction_jobs WHERE tenant = ? AND conversation_id = ?", (tenant, conversation_id))
+            db.execute("DELETE FROM turns WHERE tenant = ? AND conversation_id = ?", (tenant, conversation_id))
             db.execute("DELETE FROM conversations WHERE tenant = ? AND conversation_id = ?", (tenant, conversation_id))
+
+    def forget_document(self, tenant: str, doc_id: str) -> dict[str, int]:
+        """Remove every turn built from ``doc_id`` and the memories derived from those turns. The rest of a conversation is kept.
+
+        Turns are matched by the documents recorded when they were written. Turns written before this recording existed
+        cannot be matched; they are reported in ``unlinked`` so the operator knows the limit (see the pilot document).
+        """
+        with self._tx() as db:
+            rows = db.execute("SELECT conversation_id, seq FROM turns WHERE tenant = ? AND EXISTS "
+                              "(SELECT 1 FROM json_each(turns.cites) WHERE value = ?)", (tenant, doc_id)).fetchall()
+            for cid, seq in rows:
+                db.execute("DELETE FROM memories WHERE tenant = ? AND conversation_id = ? AND source_from = ?",
+                           (tenant, cid, seq))
+                db.execute("DELETE FROM turns WHERE tenant = ? AND conversation_id = ? AND seq = ?", (tenant, cid, seq))
+            unlinked = db.execute("SELECT COUNT(*) FROM turns WHERE tenant = ? AND role = 'assistant' AND cites = '[]'",
+                                  (tenant,)).fetchone()[0]
+        return {"turns": len(rows), "unlinked_assistant_turns": int(unlinked)}
+
+    def delete_tenant(self, tenant: str) -> int:
+        """Erasure of a whole tenant's conversations. Returns the number of turns removed."""
+        with self._tx() as db:
+            n = db.execute("SELECT COUNT(*) FROM turns WHERE tenant = ?", (tenant,)).fetchone()[0]
+            db.execute("DELETE FROM memories WHERE tenant = ?", (tenant,))
+            db.execute("DELETE FROM compaction_jobs WHERE tenant = ?", (tenant,))
+            db.execute("DELETE FROM turns WHERE tenant = ?", (tenant,))
+            db.execute("DELETE FROM conversations WHERE tenant = ?", (tenant,))
+        return int(n)
 
     # -- migration of legacy plaintext ---------------------------------------------------------------
     def migrate_plaintext(self, *, batch_size: int = MIGRATION_BATCH) -> dict[str, int]:
@@ -458,23 +513,58 @@ class ConversationStore:
         if batch_size < 1:
             raise ValueError("batch_size must be >= 1")
         counts = {"turns": 0, "memories": 0}
-        for table, key_cols in (("turns", "seq"), ("memories", "memory_id")):
-            kind = "turn" if table == "turns" else "memory"
+        for table, kind in (("turns", "turn"), ("memories", "memory")):
             while True:
                 with self._tx() as db:
-                    rows = db.execute(
-                        f"SELECT rowid, tenant, conversation_id, {key_cols}, content FROM {table} "
-                        "WHERE encrypted = 0 ORDER BY rowid LIMIT ?", (batch_size,)).fetchall()
+                    rows = db.execute(_PLAIN_ROWS[table], (batch_size,)).fetchall()
                     if not rows:
                         break
                     for rowid, tenant, cid, ident, content in rows:
                         stored, _ = self._store_text(tenant, _label(kind, cid, ident), content)
-                        db.execute(f"UPDATE {table} SET content = ?, encrypted = 1 WHERE rowid = ?", (stored, rowid))
+                        db.execute(_ENCRYPT_ROW[table], (stored, rowid))
                     counts[table] += len(rows)
         if sum(counts.values()):
             with self._lock:
                 self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                 self._db.execute("VACUUM")
+        return counts
+
+    def rekey(self, *, batch_size: int = MIGRATION_BATCH, dry_run: bool = False) -> dict[str, int]:
+        """Re-encrypt rows that are still under a *previous* master key so they are under the primary one.
+
+        Safe by construction: a row is rewritten only after it decrypted and the new value has been decrypted again and
+        compared with the plaintext, inside the same transaction as the update; a failure leaves that row as it was.
+        Because the cipher keeps decrypting under the previous keys, an interrupted run loses nothing and can simply be
+        repeated. A row that no configured key opens aborts the run with :class:`MemoryIntegrityError` before it is touched.
+        Returns the number of rows rewritten (or, with ``dry_run``, the number that would be) per table.
+        """
+        if self._cipher is None:
+            raise RuntimeError("rekey needs a TenantCipher (MASTER_KEY)")
+        counts = {"turns": 0, "memories": 0}
+        for table, kind in (("turns", "turn"), ("memories", "memory")):
+            last_rowid = 0
+            while True:
+                with self._tx() as db:
+                    rows = db.execute(_ENCRYPTED_ROWS[table], (last_rowid, batch_size)).fetchall()
+                    if not rows:
+                        break
+                    for rowid, tenant, cid, ident, stored in rows:
+                        last_rowid = rowid
+                        label = _label(kind, cid, ident)
+                        plaintext = self._load_text(tenant, label, stored, 1)  # fail closed on anything unreadable
+                        if not self._cipher.needs_rotation(tenant, stored):
+                            continue
+                        counts[table] += 1
+                        if dry_run:
+                            continue
+                        fresh, _ = self._store_text(tenant, label, plaintext)
+                        if self._load_text(tenant, label, fresh, 1) != plaintext:  # verify before replacing
+                            raise MemoryIntegrityError(f"{label}: re-encryption did not round-trip; nothing was changed")
+                        db.execute(_REWRITE_ROW[table], (fresh, rowid))
+        if sum(counts.values()) and not dry_run:
+            with self._lock:
+                self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                self._db.execute("VACUUM")  # the superseded ciphertexts do not linger in free pages
         return counts
 
     def _conversation(self, tenant: str, conversation_id: str) -> dict:

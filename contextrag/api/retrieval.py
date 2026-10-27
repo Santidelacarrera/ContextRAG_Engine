@@ -23,6 +23,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..audit import audit_text
 from ..core.events import emit
 from ..generation.llm import NO_ANSWER, ExtractiveLLM
 from ..pipeline import ContextRAG
@@ -114,7 +115,7 @@ def register_retrieve(app: FastAPI, *, get_rag: Callable[[], ContextRAG], get_db
                 contexts = rag.retriever.retrieve(body.query, c.tenant, groups, body.top_k)
                 latency_ms = (time.perf_counter() - t0) * 1000
                 db.log_retrieval(conn, {
-                    "id": str(uuid.uuid4()), "tenant": c.tenant, "user": c.id, "query": body.query,
+                    "id": str(uuid.uuid4()), "tenant": c.tenant, "user": c.id, "query": audit_text(body.query, rag.cfg.audit_question),
                     "top_k": body.top_k, "fragments": len(contexts), "latency_ms": latency_ms,
                     "doc_ids": [ctx.parent.doc_id for ctx in contexts],
                 })

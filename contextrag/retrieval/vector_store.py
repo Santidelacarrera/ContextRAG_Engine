@@ -15,6 +15,10 @@ from ..core.models import ChildChunk, ParentChunk
 from ..core.security import TenantCipher, visible
 
 
+class DimensionMismatch(ValueError):
+    """Vectors from a different embedding model (or size) were offered to an index that holds another."""
+
+
 class VectorStore(Protocol):
     def add(self, parents: Sequence[ParentChunk], children: Sequence[ChildChunk],
             vectors: Sequence[Sequence[float]]) -> None: ...
@@ -29,6 +33,10 @@ class VectorStore(Protocol):
 
     def doc_hash(self, tenant: str, doc_id: str) -> str | None:
         """Fingerprint of the currently indexed version of a document, if any."""
+        ...
+
+    def doc_acl(self, tenant: str, doc_id: str) -> tuple[str, ...] | None:
+        """ACL of the currently indexed version of a document; ``None`` if the document is not indexed."""
         ...
 
     def delete_tenant(self, tenant: str) -> int:
@@ -47,6 +55,7 @@ class InMemoryVectorStore:
     L2-normalised). Thread-safe. For large corpora use Qdrant (approximate search, on disk, horizontally scalable)."""
 
     def __init__(self):
+        self._dim: int | None = None  # fixed by the first write: a later write with another size is refused
         self._parents: dict[str, ParentChunk] = {}
         self._children: dict[str, ChildChunk] = {}
         self._vecs: dict[str, Sequence[float]] = {}
@@ -54,7 +63,15 @@ class InMemoryVectorStore:
         self._lock = threading.RLock()
 
     def add(self, parents, children, vectors):
+        dims = {len(v) for v in vectors}
+        if len(dims) > 1:
+            raise DimensionMismatch(f"vectors of different sizes in one write: {sorted(dims)}")
         with self._lock:
+            if dims and self._dim is not None and dims != {self._dim}:
+                raise DimensionMismatch(f"index holds {self._dim}-dimensional vectors; got {sorted(dims)} (the embedding "
+                                        "model changed: re-ingest the documents or erase the tenant)")
+            if dims:
+                self._dim = next(iter(dims))
             for p in parents:
                 self._parents[p.id] = p
             for c, v in zip(children, vectors, strict=True):
@@ -122,6 +139,10 @@ class InMemoryVectorStore:
     def doc_hash(self, tenant, doc_id):
         with self._lock:
             return next((p.doc_hash for p in self._parents.values() if p.tenant == tenant and p.doc_id == doc_id), None)
+
+    def doc_acl(self, tenant, doc_id):
+        with self._lock:
+            return next((p.acl for p in self._parents.values() if p.tenant == tenant and p.doc_id == doc_id), None)
 
     def health(self):
         return True
@@ -197,6 +218,39 @@ class QdrantVectorStore:
                          "acl": list(p.acl), "section": p.section, "page": p.page,
                          "page_breaks": list(p.page_breaks), "doc_hash": p.doc_hash}) for p in parents])
 
+    def rekey(self, *, dry_run: bool = False, page: int = 256) -> dict[str, int]:
+        """Re-encrypt chunk text still under a previous master key. Each point is rewritten only after its text decrypted
+        and the new value decrypted back to the same plaintext; the cipher keeps reading under previous keys, so an
+        interrupted run loses nothing and can be repeated. Returns the points rewritten (or that would be) per collection."""
+        if self.cipher is None:
+            raise RuntimeError("rekey needs a TenantCipher (MASTER_KEY)")
+        counts = {"children": 0, "parents": 0}
+        for name, collection in (("children", self.col), ("parents", self.pcol)):
+            offset = None
+            while True:
+                points, offset = self.client.scroll(collection, limit=page, offset=offset, with_payload=True)
+                for pt in points:
+                    if not pt.payload or "tenant" not in pt.payload or "text" not in pt.payload:
+                        # Abort, do not skip: a point that cannot be read would otherwise stay under the old key unnoticed.
+                        # Points rewritten before this one remain rewritten (they are under the primary key); repeating the
+                        # run after the point is repaired or removed completes the job. Only the collection and id are named.
+                        raise RuntimeError(f"rekey aborted: {name} point {pt.id} has no tenant/text payload; "
+                                           "points before it were rewritten, re-run after repairing or removing it")
+                    tenant, token = pt.payload["tenant"], pt.payload["text"]
+                    plaintext = self.cipher.decrypt(tenant, token)  # raises for text no configured key opens
+                    if not self.cipher.needs_rotation(tenant, token):
+                        continue
+                    counts[name] += 1
+                    if dry_run:
+                        continue
+                    fresh = self.cipher.encrypt(tenant, plaintext)
+                    if self.cipher.decrypt(tenant, fresh) != plaintext:
+                        raise RuntimeError(f"re-encryption of a {name[:-1]} did not round-trip; nothing was changed")
+                    self.client.set_payload(collection, payload={"text": fresh}, points=[pt.id])
+                if offset is None:
+                    break
+        return counts
+
     def _child(self, tenant, d):
         return ChildChunk(d["cid"], d["pid"], d["doc_id"], tenant, self._dec(tenant, d["text"]),
                           d["start"], d["end"], tuple(d["acl"]))
@@ -259,6 +313,14 @@ class QdrantVectorStore:
             scroll_filter=qm.Filter(must=[qm.FieldCondition(key="tenant", match=qm.MatchValue(value=tenant)),
                                           qm.FieldCondition(key="doc_id", match=qm.MatchValue(value=doc_id))]))
         return pts[0].payload.get("doc_hash") if pts else None
+
+    def doc_acl(self, tenant, doc_id):
+        qm = self.qm
+        pts, _ = self.client.scroll(
+            self.pcol, limit=1, with_payload=["acl"],
+            scroll_filter=qm.Filter(must=[qm.FieldCondition(key="tenant", match=qm.MatchValue(value=tenant)),
+                                          qm.FieldCondition(key="doc_id", match=qm.MatchValue(value=doc_id))]))
+        return tuple(pts[0].payload.get("acl", ())) if pts else None
 
     def health(self):
         try:

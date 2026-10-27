@@ -16,8 +16,10 @@ import unicodedata
 from functools import lru_cache
 from typing import Protocol, Sequence
 
+from ..core.tracing import NULL_TRACER, Tracer
 from ..core.models import ClaimVerdict, Context, Evidence
-from ..core.text import STOPWORDS, _ends_with_abbreviation, content_tokens, is_abbreviation, split_sentences, stem
+from ..core.text import (STOPWORDS, _continues_in_lower_case, _ends_with_abbreviation, _ends_with_corporate_suffix,
+                         content_tokens, is_abbreviation, protect_corporate_suffixes, split_sentences, stem)
 
 DEFAULT_THRESHOLD = 0.95
 MAX_WINDOW = 3  # evidence windows span 1..3 consecutive sentences
@@ -100,7 +102,7 @@ _COND = {stem(w) for w in _CONDITION_WORDS}
 
 class _Analysis:
     def __init__(self, text: str):
-        t = unicodedata.normalize("NFKC", text).casefold().replace("%", " percent ")
+        t = unicodedata.normalize("NFKC", protect_corporate_suffixes(text)).casefold().replace("%", " percent ")
         for pat, rep in _CONTRACTIONS:
             t = re.sub(pat, rep, t)
         self.sentences: list[list[_Clause]] = []
@@ -218,25 +220,44 @@ class LexicalEntailment:
 class DebertaNLI:
     """DeBERTa-v3 NLI cross-encoder (needs ``transformers`` + ``torch``)."""
 
-    def __init__(self, model: str = "MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli", batch_size: int = 16):
+    def __init__(self, model: str = "MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli", batch_size: int = 16,
+                 revision: str | None = None):
+        """``revision`` pins the exact Hub commit. Without it the weights can change under a deployment without notice;
+        set NLI_MODEL_REVISION to a commit hash you have reviewed."""
         import torch
         from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
         self._torch = torch
-        self._tok = AutoTokenizer.from_pretrained(model)
-        self._m = AutoModelForSequenceClassification.from_pretrained(model).eval()
-        self._ent = {k.lower(): v for k, v in self._m.config.label2id.items()}["entailment"]
+        self.model_name = model  # part of the answer-cache key: another checkpoint must not reuse cached verdicts
+        if revision is None:
+            import logging
+
+            logging.getLogger("contextrag.nli").warning("NLI model %s loaded without a pinned revision", model)
+        self._tok = AutoTokenizer.from_pretrained(model, revision=revision)
+        self._m = AutoModelForSequenceClassification.from_pretrained(model, revision=revision).eval()
+        labels = {k.lower(): v for k, v in self._m.config.label2id.items()}
+        self._ent = labels["entailment"]
+        self._con = labels.get("contradiction")  # MNLI-style heads have it; others do not
         self.batch_size = batch_size
 
-    def entailment(self, pairs):
+    def _probability(self, pairs, label: int) -> list[float]:
         out: list[float] = []
         for i in range(0, len(pairs), self.batch_size):
             batch = pairs[i : i + self.batch_size]
             enc = self._tok([p for p, _ in batch], [h for _, h in batch], truncation=True, max_length=512,
                             padding=True, return_tensors="pt")
             with self._torch.no_grad():
-                out.extend(self._m(**enc).logits.softmax(-1)[:, self._ent].tolist())
+                out.extend(self._m(**enc).logits.softmax(-1)[:, label].tolist())
         return out
+
+    def entailment(self, pairs):
+        return self._probability(pairs, self._ent)
+
+    def contradiction(self, pairs):
+        """P(the two statements contradict each other). Only for models whose head has a contradiction class."""
+        if self._con is None:
+            raise RuntimeError("this NLI model has no 'contradiction' class")
+        return self._probability(pairs, self._con)
 
 
 # ---- claim parsing -----------------------------------------------------------------------
@@ -254,6 +275,9 @@ def parse_claims(answer: str) -> list[tuple[str, list[int]]]:
     for m in _SPLIT.finditer(normalised):
         if "\n" not in m.group() and _ends_with_abbreviation(normalised[pos : m.start()]):
             continue  # abbreviation such as "Dr." or "e.g.": not a sentence end
+        if ("\n" not in m.group() and _ends_with_corporate_suffix(normalised[pos : m.start()])
+                and _continues_in_lower_case(normalised, m.end())):
+            continue  # "Valdivia S.A. tiene ...": a company form, and the sentence goes on
         segments.append(normalised[pos : m.start()])
         pos = m.end()
     segments.append(normalised[pos:])
@@ -310,6 +334,7 @@ class NLIVerifier:
         if not (0.0 < threshold <= 1.0):
             raise ValueError(f"threshold must be in (0, 1], got {threshold!r}")
         self.nli, self.threshold = nli or LexicalEntailment(), threshold
+        self.tracer: Tracer = NULL_TRACER  # ContextRAG replaces it; stages are verify.nli and citations
 
     def verify(self, answer: str, contexts: Sequence[Context]) -> list[ClaimVerdict]:
         by_index = {c.index: c for c in contexts}
@@ -327,20 +352,22 @@ class NLIVerifier:
             if not cand:
                 verdicts.append(ClaimVerdict(claim, cites, 0.0, False, None, "cited passage empty"))
                 continue
-            scores = self.nli.entailment([(w, claim) for w, _, _, _ in cand])
+            with self.tracer.span("verify.nli", pairs=len(cand)):
+                scores = self.nli.entailment([(w, claim) for w, _, _, _ in cand])
             # Support is decided by the best entailment score. For the *evidence span* we prefer, among windows that
             # also pass the threshold and score within EVIDENCE_TOLERANCE of the best, the one that most resembles the
             # claim, then the tightest -- so saturated NLI scores never pick an arbitrary (e.g. heading) sentence.
-            top = max(scores)
-            floor = max(self.threshold, top - EVIDENCE_TOLERANCE) if top >= self.threshold else top
-            eligible = [i for i in range(len(scores)) if scores[i] >= floor]
-            sim = [_term_overlap(claim, cand[i][0]) for i in range(len(cand))]
-            best = max(eligible, key=lambda i: (round(sim[i], 6), -len(cand[i][0]), scores[i]))
-            w, s, e, ctx = cand[best]
-            ok = scores[best] >= self.threshold
-            p = ctx.parent
-            verdicts.append(ClaimVerdict(
-                claim, cites, float(scores[best]), ok,
-                Evidence(p.doc_id, p.source, s, e, w, p.page_at(s)) if ok else None,
-                "" if ok else f"best entailment {scores[best]:.2f} < {self.threshold}"))
+            with self.tracer.span("citations"):  # choosing the exact span, page and document a claim is traced to
+                top = max(scores)
+                floor = max(self.threshold, top - EVIDENCE_TOLERANCE) if top >= self.threshold else top
+                eligible = [i for i in range(len(scores)) if scores[i] >= floor]
+                sim = [_term_overlap(claim, cand[i][0]) for i in range(len(cand))]
+                best = max(eligible, key=lambda i: (round(sim[i], 6), -len(cand[i][0]), scores[i]))
+                w, s, e, ctx = cand[best]
+                ok = scores[best] >= self.threshold
+                p = ctx.parent
+                verdicts.append(ClaimVerdict(
+                    claim, cites, float(scores[best]), ok,
+                    Evidence(p.doc_id, p.source, s, e, w, p.page_at(s)) if ok else None,
+                    "" if ok else f"best entailment {scores[best]:.2f} < {self.threshold}"))
         return verdicts

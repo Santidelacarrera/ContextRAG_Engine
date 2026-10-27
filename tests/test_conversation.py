@@ -122,20 +122,23 @@ def test_conversations_are_refused_clearly_when_memory_is_not_configured():
 
 
 def test_api_continues_and_erases_conversations_within_the_tenant_only():
+    from contextrag.api.server import scoped_conversation_id
+
     rag = conversational_rag()
+    cid = scoped_conversation_id(None, "c1")  # stored under an owner-bound id; open mode has no user, hence None
     client = TestClient(create_app(rag))
     try:
         r = client.post("/query", json={"question": "¿Cuánto tiempo se conservan los registros de auditoría?",
                                         "conversation_id": "c1"}, headers={"X-Tenant": "acme"})
         assert r.status_code == 200
-        assert rag.memory.version("acme", "c1") == 2
+        assert rag.memory.version("acme", cid) == 2
         assert client.post("/query", json={"question": "hola", "conversation_id": "c1"},
                            headers={"X-Tenant": "rival"}).status_code == 200  # other tenant: its own conversation
-        assert rag.memory.version("rival", "c1") == 2 and rag.memory.version("acme", "c1") == 2
+        assert rag.memory.version("rival", cid) == 2 and rag.memory.version("acme", cid) == 2
         assert client.delete("/conversations/c1", headers={"X-Tenant": "acme"}).json()["deleted"] == "c1"
         with pytest.raises(ConversationNotFound):
-            rag.memory.version("acme", "c1")
-        assert rag.memory.version("rival", "c1") == 2  # erasure is scoped to the caller's tenant
+            rag.memory.version("acme", cid)
+        assert rag.memory.version("rival", cid) == 2  # erasure is scoped to the caller's tenant
     finally:
         rag.close()
 
