@@ -37,7 +37,8 @@ def test_healthz_reports_degraded_component_with_503():
 def test_healthz_unavailable_when_backend_cannot_start(monkeypatch):
     monkeypatch.setattr(factory, "from_env", lambda: (_ for _ in ()).throw(RuntimeError("qdrant down")))
     r = TestClient(create_app()).get("/healthz")
-    assert r.status_code == 503 and "qdrant down" in r.json()["error"]
+    assert r.status_code == 503 and r.json()["error"] == "RuntimeError"
+    assert "qdrant down" not in r.text  # the public probe names the class of the failure, never its message
 
 
 def test_ingest_then_query_returns_audited_answer_with_coordinates(client):
@@ -152,7 +153,7 @@ def test_delete_document_removes_it_from_answers_and_cache(client):
     body = {"question": "¿Cuánto tiempo se conservan los registros de auditoría?"}
     assert client.post("/query", json=body, headers=H).json()["status"] == "verified"
     r = client.delete("/documents/policy.md", headers=H)
-    assert r.status_code == 200 and r.json() == {"tenant": "acme", "deleted": "policy.md"}
+    assert r.status_code == 200 and {k: r.json()[k] for k in ("tenant", "deleted")} == {"tenant": "acme", "deleted": "policy.md"}
     j = client.post("/query", json=body, headers=H).json()
     assert j["status"] == "fallback" and not j["cached"]  # stale cached answer must not survive deletion
     assert client.delete("/documents/policy.md", headers=H).status_code == 200  # idempotent
@@ -198,3 +199,34 @@ def test_list_documents_is_tenant_scoped_and_shows_acl_docs(client):
     client.delete("/documents/policy.md", headers=H)
     assert [d["doc_id"] for d in client.get("/documents", headers=H).json()["documents"]] == ["secret.txt"]
     assert client.get("/documents").status_code == 400
+
+
+# ---- graceful shutdown ---------------------------------------------------------------------
+
+def test_shutdown_closes_what_the_app_built_but_not_what_the_caller_injected(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from contextrag import factory
+    from contextrag.api.server import create_app
+
+    closed = []
+
+    class Tracked:
+        def __init__(self, name):
+            self.name = name
+
+        def health(self):
+            return {"index": True}
+
+        def close(self):
+            closed.append(self.name)
+
+    monkeypatch.setattr(factory, "from_env", lambda: Tracked("built"))
+    with TestClient(create_app()) as client:  # lifespan runs on enter/exit
+        assert client.get("/healthz").status_code == 200  # first use builds the pipeline from the environment
+    assert closed == ["built"]
+
+    closed.clear()
+    with TestClient(create_app(Tracked("injected"))) as client:
+        assert client.get("/healthz").status_code == 200
+    assert closed == []  # the caller owns an injected pipeline

@@ -55,8 +55,10 @@ def test_turns_round_trip_and_the_database_holds_no_plaintext(tmp_path):
     assert s.turns_between("acme", "c1", 0, 1)[0].content == SECRET
     s.close()
     assert SECRET.encode() not in file_bytes(path)
-    stored = raw_rows(path, "turns")[0]
-    assert stored[4] != SECRET and stored[-2] == 1  # content is ciphertext, encrypted flag is set
+    con = sqlite3.connect(path)
+    content, encrypted = con.execute("SELECT content, encrypted FROM turns").fetchone()
+    con.close()
+    assert content != SECRET and encrypted == 1  # content is ciphertext, encrypted flag is set
 
 
 def test_memories_round_trip_and_are_stored_encrypted(tmp_path):

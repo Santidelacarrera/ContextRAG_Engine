@@ -83,7 +83,9 @@ def test_audit_record_contains_evidence_and_sources(rag):
     rag.ask("¿Cómo se cifran los datos en reposo?", tenant="acme", user="u1")
     rec = rag.audit.list("acme")[0]
     assert rec["status"] == "verified" and rec["user"] == "u1"
-    assert rec["claims"][0]["evidence"]["text"] and rec["sources"][0]["doc_id"] == "policy.md"
+    ev = rec["claims"][0]["evidence"]
+    assert ev["text_sha256"] and ev["text_chars"] > 0 and "text" not in ev  # a digest, not the excerpt
+    assert rec["sources"][0]["doc_id"] == "policy.md"
     assert rag.audit.list("other") == []
 
 
