@@ -104,6 +104,7 @@ def test_the_sdk_client_is_built_with_an_explicit_timeout_and_bounded_retries(mo
 # ---- Ollama -------------------------------------------------------------------------------------------------
 
 class FakeResponse(io.BytesIO):
+    headers: dict[str, str] = {}  # a real response exposes the headers; none is declared here, so the size check reads the body
     def __enter__(self):
         return self
 

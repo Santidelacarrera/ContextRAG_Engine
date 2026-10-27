@@ -118,8 +118,13 @@ class ContextRAGClient:
         req = urllib.request.Request(self._base + path, data=data, headers=headers, method=method)
         try:
             with self._opener.open(req, timeout=self._timeout) as r:
+                declared = r.headers.get("Content-Length")
+                if declared is not None and declared.isdigit() and int(declared) > MAX_RESPONSE_BYTES:
+                    raise ContextRAGError(r.status, "response_too_large")
                 raw = r.read(MAX_RESPONSE_BYTES + 1)
                 status = r.status
+        except ContextRAGError:
+            raise
         except urllib.error.HTTPError as e:
             raw = e.read(MAX_RESPONSE_BYTES) if hasattr(e, "read") else b""
             raise ContextRAGError(e.code, _server_code(raw, e.code)) from None

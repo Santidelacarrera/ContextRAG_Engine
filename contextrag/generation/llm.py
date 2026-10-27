@@ -252,7 +252,14 @@ class OllamaLLM:
         req = urllib.request.Request(f"{self.host}/api/chat", body, {"Content-Type": "application/json"})
         try:
             with self._opener.open(req, timeout=self.timeout) as r:
+                # Refuse on the declared length before reading anything; the bounded read below is the guard when
+                # the length is absent (chunked), so the result never depends on when the server closes the socket.
+                declared = r.headers.get("Content-Length")
+                if declared is not None and declared.isdigit() and int(declared) > MAX_RESPONSE_BYTES:
+                    raise GenerationError("ResponseTooLarge")
                 raw = r.read(MAX_RESPONSE_BYTES + 1)
+        except GenerationError:
+            raise
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             raise GenerationError(type(e).__name__) from e  # class only: the URL and the body are not reported
         if len(raw) > MAX_RESPONSE_BYTES:
