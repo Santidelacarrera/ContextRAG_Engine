@@ -1,0 +1,808 @@
+{
+ "version": 1,
+ "seed": 11,
+ "synthetic": true,
+ "documents": [
+  {
+   "doc_id": "rosyorovx.md",
+   "text": "# Rosyorovx service runbook\n\nRosyorovx is an internal service owned by the Storage team.\n\n## Data retention\n\nThe retention period for Rosyorovx logs is 365 days. After that period the records are deleted automatically.\n\n## Hosting\n\nRosyorovx runs in the ca-central region. Changes to this service follow the standard review process and are announced in the engineering channel.\n\n## Security\n\nRosyorovx encrypts data at rest using AES-128. Keys are rotated every 3 months. Dashboards for latency and error budgets are linked from the internal portal.\n\n## Operations\n\nSupport for Rosyorovx is provided by a follow-the-sun rotation. Backups are verified by restoring them into an isolated environment.\n"
+  },
+  {
+   "doc_id": "ultorzelx.md",
+   "text": "# Ultorzelx service runbook\n\nUltorzelx is an internal service owned by the Search team.\n\n## Data retention\n\nThe retention period for Ultorzelx logs is 30 days. After that period the records are deleted automatically.\n\n## Hosting\n\nUltorzelx runs in the me-central region. Access to production is granted per task and revoked automatically afterwards.\n\n## Security\n\nUltorzelx encrypts data at rest using ChaCha20. Keys are rotated every 3 months. Backups are verified by restoring them into an isolated environment.\n\n## Operations\n\nSupport for Ultorzelx is provided around the clock. Runbook steps are reviewed every quarter and updated after each major incident.\n"
+  },
+  {
+   "doc_id": "tormarx.md",
+   "text": "# Tormarx service runbook\n\nTormarx is an internal service owned by the Storage team.\n\n## Data retention\n\nThe retention period for Tormarx logs is 730 days. After that period the records are deleted automatically.\n\n## Hosting\n\nTormarx runs in the ca-central region. Runbook steps are reviewed every quarter and updated after each major incident.\n\n## Security\n\nTormarx encrypts data at rest using AES-128. Keys are rotated every 12 months. Capacity is planned against the traffic forecast published at the start of the year.\n\n## Operations\n\nSupport for Tormarx is provided around the clock. Dependencies are listed in the architecture register together with their owners.\n"
+  },
+  {
+   "doc_id": "berberx.md",
+   "text": "# Berberx service runbook\n\nBerberx is an internal service owned by the Billing team.\n\n## Data retention\n\nThe retention period for Berberx logs is 60 days. After that period the records are deleted automatically.\n\n## Hosting\n\nBerberx runs in the ca-central region. Capacity is planned against the traffic forecast published at the start of the year.\n\n## Security\n\nBerberx encrypts data at rest using AES-256. Keys are rotated every 6 months. Changes to this service follow the standard review process and are announced in the engineering channel.\n\n## Operations\n\nSupport for Berberx is provided during business hours only. Feature flags are cleaned up within two sprints of a full rollout.\n"
+  },
+  {
+   "doc_id": "salgorquinx.md",
+   "text": "# Salgorquinx service runbook\n\nSalgorquinx is an internal service owned by the Billing team.\n\n## Data retention\n\nThe retention period for Salgorquinx logs is 730 days. After that period the records are deleted automatically.\n\n## Hosting\n\nSalgorquinx runs in the ap-south region. Backups are verified by restoring them into an isolated environment.\n\n## Security\n\nSalgorquinx encrypts data at rest using RSA-4096. Keys are rotated every 3 months. Dashboards for latency and error budgets are linked from the internal portal.\n\n## Operations\n\nSupport for Salgorquinx is provided by a follow-the-sun rotation. Capacity is planned against the traffic forecast published at the start of the year.\n"
+  },
+  {
+   "doc_id": "ovulx.md",
+   "text": "# Ovulx service runbook\n\nOvulx is an internal service owned by the Platform team.\n\n## Data retention\n\nThe retention period for Ovulx logs is 180 days. After that period the records are deleted automatically.\n\n## Hosting\n\nOvulx runs in the af-south region. Feature flags are cleaned up within two sprints of a full rollout.\n\n## Security\n\nOvulx encrypts data at rest using AES-256. Keys are rotated every 12 months. Dashboards for latency and error budgets are linked from the internal portal.\n\n## Operations\n\nSupport for Ovulx is provided during business hours only. Dependencies are listed in the architecture register together with their owners.\n"
+  },
+  {
+   "doc_id": "yorhalquinx.md",
+   "text": "# Yorhalquinx service runbook\n\nYorhalquinx is an internal service owned by the Platform team.\n\n## Data retention\n\nThe retention period for Yorhalquinx logs is 30 days. After that period the records are deleted automatically.\n\n## Hosting\n\nYorhalquinx runs in the eu-north region. Changes to this service follow the standard review process and are announced in the engineering channel.\n\n## Security\n\nYorhalquinx encrypts data at rest using AES-256. Keys are rotated every 6 months. Capacity is planned against the traffic forecast published at the start of the year.\n\n## Operations\n\nSupport for Yorhalquinx is provided around the clock. Access to production is granted per task and revoked automatically afterwards.\n"
+  },
+  {
+   "doc_id": "marcoralx.md",
+   "text": "# Marcoralx service runbook\n\nMarcoralx is an internal service owned by the Payments team.\n\n## Data retention\n\nThe retention period for Marcoralx logs is 60 days. After that period the records are deleted automatically.\n\n## Hosting\n\nMarcoralx runs in the us-west region. Dependencies are listed in the architecture register together with their owners.\n\n## Security\n\nMarcoralx encrypts data at rest using AES-256. Keys are rotated every 6 months. Capacity is planned against the traffic forecast published at the start of the year.\n\n## Operations\n\nSupport for Marcoralx is provided during business hours only. Runbook steps are reviewed every quarter and updated after each major incident.\n"
+  },
+  {
+   "doc_id": "norcorsalx.md",
+   "text": "# Norcorsalx service runbook\n\nNorcorsalx is an internal service owned by the Billing team.\n\n## Data retention\n\nThe retention period for Norcorsalx logs is 2555 days. After that period the records are deleted automatically.\n\n## Hosting\n\nNorcorsalx runs in the ap-south region. Capacity is planned against the traffic forecast published at the start of the year.\n\n## Security\n\nNorcorsalx encrypts data at rest using ChaCha20. Keys are rotated every 3 months. Changes to this service follow the standard review process and are announced in the engineering channel.\n\n## Operations\n\nSupport for Norcorsalx is provided during business hours only. Dependencies are listed in the architecture register together with their owners.\n"
+  },
+  {
+   "doc_id": "alnoryorx.md",
+   "text": "# Alnoryorx service runbook\n\nAlnoryorx is an internal service owned by the Identity team.\n\n## Data retention\n\nThe retention period for Alnoryorx logs is 60 days. After that period the records are deleted automatically.\n\n## Hosting\n\nAlnoryorx runs in the us-west region. Dashboards for latency and error budgets are linked from the internal portal.\n\n## Security\n\nAlnoryorx encrypts data at rest using AES-256. Keys are rotated every 3 months. Feature flags are cleaned up within two sprints of a full rollout.\n\n## Operations\n\nSupport for Alnoryorx is provided around the clock. Backups are verified by restoring them into an isolated environment.\n"
+  },
+  {
+   "doc_id": "zelpelfax.md",
+   "text": "# Zelpelfax service runbook\n\nZelpelfax is an internal service owned by the Gateway team.\n\n## Data retention\n\nThe retention period for Zelpelfax logs is 60 days. After that period the records are deleted automatically.\n\n## Hosting\n\nZelpelfax runs in the me-central region. Backups are verified by restoring them into an isolated environment.\n\n## Security\n\nZelpelfax encrypts data at rest using AES-128. Keys are rotated every 12 months. Changes to this service follow the standard review process and are announced in the engineering channel.\n\n## Operations\n\nSupport for Zelpelfax is provided around the clock. Runbook steps are reviewed every quarter and updated after each major incident.\n"
+  },
+  {
+   "doc_id": "ulmardunx.md",
+   "text": "# Ulmardunx service runbook\n\nUlmardunx is an internal service owned by the Messaging team.\n\n## Data retention\n\nThe retention period for Ulmardunx logs is 180 days. After that period the records are deleted automatically.\n\n## Hosting\n\nUlmardunx runs in the us-west region. Dependencies are listed in the architecture register together with their owners.\n\n## Security\n\nUlmardunx encrypts data at rest using AES-256. Keys are rotated every 6 months. Runbook steps are reviewed every quarter and updated after each major incident.\n\n## Operations\n\nSupport for Ulmardunx is provided by a follow-the-sun rotation. Feature flags are cleaned up within two sprints of a full rollout.\n"
+  },
+  {
+   "doc_id": "algorfax.md",
+   "text": "# Algorfax service runbook\n\nAlgorfax is an internal service owned by the Messaging team.\n\n## Data retention\n\nThe retention period for Algorfax logs is 2555 days. After that period the records are deleted automatically.\n\n## Hosting\n\nAlgorfax runs in the ca-central region. Changes to this service follow the standard review process and are announced in the engineering channel.\n\n## Security\n\nAlgorfax encrypts data at rest using AES-256. Keys are rotated every 3 months. Runbook steps are reviewed every quarter and updated after each major incident.\n\n## Operations\n\nSupport for Algorfax is provided around the clock. Access to production is granted per task and revoked automatically afterwards.\n"
+  },
+  {
+   "doc_id": "ovisx.md",
+   "text": "# Ovisx service runbook\n\nOvisx is an internal service owned by the Payments team.\n\n## Data retention\n\nThe retention period for Ovisx logs is 2555 days. After that period the records are deleted automatically.\n\n## Hosting\n\nOvisx runs in the ca-central region. Dashboards for latency and error budgets are linked from the internal portal.\n\n## Security\n\nOvisx encrypts data at rest using ChaCha20. Keys are rotated every 6 months. Changes to this service follow the standard review process and are announced in the engineering channel.\n\n## Operations\n\nSupport for Ovisx is provided during business hours only. Capacity is planned against the traffic forecast published at the start of the year.\n"
+  },
+  {
+   "doc_id": "corcorx.md",
+   "text": "# Corcorx service runbook\n\nCorcorx is an internal service owned by the Billing team.\n\n## Data retention\n\nThe retention period for Corcorx logs is 365 days. After that period the records are deleted automatically.\n\n## Hosting\n\nCorcorx runs in the us-west region. Dependencies are listed in the architecture register together with their owners.\n\n## Security\n\nCorcorx encrypts data at rest using AES-256. Keys are rotated every 12 months. Access to production is granted per task and revoked automatically afterwards.\n\n## Operations\n\nSupport for Corcorx is provided during business hours only. Capacity is planned against the traffic forecast published at the start of the year.\n"
+  },
+  {
+   "doc_id": "torovelx.md",
+   "text": "# Torovelx service runbook\n\nTorovelx is an internal service owned by the Compliance team.\n\n## Data retention\n\nThe retention period for Torovelx logs is 180 days. After that period the records are deleted automatically.\n\n## Hosting\n\nTorovelx runs in the ca-central region. Access to production is granted per task and revoked automatically afterwards.\n\n## Security\n\nTorovelx encrypts data at rest using AES-128. Keys are rotated every 6 months. Capacity is planned against the traffic forecast published at the start of the year.\n\n## Operations\n\nSupport for Torovelx is provided around the clock. Changes to this service follow the standard review process and are announced in the engineering channel.\n"
+  },
+  {
+   "doc_id": "junhalx.md",
+   "text": "# Junhalx service runbook\n\nJunhalx is an internal service owned by the Compliance team.\n\n## Data retention\n\nThe retention period for Junhalx logs is 60 days. After that period the records are deleted automatically.\n\n## Hosting\n\nJunhalx runs in the us-west region. Capacity is planned against the traffic forecast published at the start of the year.\n\n## Security\n\nJunhalx encrypts data at rest using AES-128. Keys are rotated every 12 months. Backups are verified by restoring them into an isolated environment.\n\n## Operations\n\nSupport for Junhalx is provided by a follow-the-sun rotation. Changes to this service follow the standard review process and are announced in the engineering channel.\n"
+  },
+  {
+   "doc_id": "vermarx.md",
+   "text": "# Vermarx service runbook\n\nVermarx is an internal service owned by the Storage team.\n\n## Data retention\n\nThe retention period for Vermarx logs is 365 days. After that period the records are deleted automatically.\n\n## Hosting\n\nVermarx runs in the eu-north region. Backups are verified by restoring them into an isolated environment.\n\n## Security\n\nVermarx encrypts data at rest using RSA-4096. Keys are rotated every 3 months. Feature flags are cleaned up within two sprints of a full rollout.\n\n## Operations\n\nSupport for Vermarx is provided around the clock. Changes to this service follow the standard review process and are announced in the engineering channel.\n"
+  },
+  {
+   "doc_id": "berquinx.md",
+   "text": "# Berquinx service runbook\n\nBerquinx is an internal service owned by the Platform team.\n\n## Data retention\n\nThe retention period for Berquinx logs is 60 days. After that period the records are deleted automatically.\n\n## Hosting\n\nBerquinx runs in the sa-east region. Runbook steps are reviewed every quarter and updated after each major incident.\n\n## Security\n\nBerquinx encrypts data at rest using ChaCha20. Keys are rotated every 6 months. Access to production is granted per task and revoked automatically afterwards.\n\n## Operations\n\nSupport for Berquinx is provided by a follow-the-sun rotation. Feature flags are cleaned up within two sprints of a full rollout.\n"
+  },
+  {
+   "doc_id": "junquinfax.md",
+   "text": "# Junquinfax service runbook\n\nJunquinfax is an internal service owned by the Identity team.\n\n## Data retention\n\nThe retention period for Junquinfax logs is 60 days. After that period the records are deleted automatically.\n\n## Hosting\n\nJunquinfax runs in the us-west region. Runbook steps are reviewed every quarter and updated after each major incident.\n\n## Security\n\nJunquinfax encrypts data at rest using RSA-4096. Keys are rotated every 12 months. Capacity is planned against the traffic forecast published at the start of the year.\n\n## Operations\n\nSupport for Junquinfax is provided by a follow-the-sun rotation. Dashboards for latency and error budgets are linked from the internal portal.\n"
+  },
+  {
+   "doc_id": "isgorx.md",
+   "text": "# Isgorx service runbook\n\nIsgorx is an internal service owned by the Billing team.\n\n## Data retention\n\nThe retention period for Isgorx logs is 730 days. After that period the records are deleted automatically.\n\n## Hosting\n\nIsgorx runs in the eu-west region. Feature flags are cleaned up within two sprints of a full rollout.\n\n## Security\n\nIsgorx encrypts data at rest using AES-256. Keys are rotated every 6 months. Capacity is planned against the traffic forecast published at the start of the year.\n\n## Operations\n\nSupport for Isgorx is provided during business hours only. Access to production is granted per task and revoked automatically afterwards.\n"
+  },
+  {
+   "doc_id": "halberberx.md",
+   "text": "# Halberberx service runbook\n\nHalberberx is an internal service owned by the Search team.\n\n## Data retention\n\nThe retention period for Halberberx logs is 90 days. After that period the records are deleted automatically.\n\n## Hosting\n\nHalberberx runs in the ap-east region. Dashboards for latency and error budgets are linked from the internal portal.\n\n## Security\n\nHalberberx encrypts data at rest using AES-128. Keys are rotated every 3 months. Backups are verified by restoring them into an isolated environment.\n\n## Operations\n\nSupport for Halberberx is provided during business hours only. Feature flags are cleaned up within two sprints of a full rollout.\n"
+  },
+  {
+   "doc_id": "ovkelx.md",
+   "text": "# Ovkelx service runbook\n\nOvkelx is an internal service owned by the Gateway team.\n\n## Data retention\n\nThe retention period for Ovkelx logs is 365 days. After that period the records are deleted automatically.\n\n## Hosting\n\nOvkelx runs in the us-east region. Feature flags are cleaned up within two sprints of a full rollout.\n\n## Security\n\nOvkelx encrypts data at rest using AES-256. Keys are rotated every 3 months. Access to production is granted per task and revoked automatically afterwards.\n\n## Operations\n\nSupport for Ovkelx is provided during business hours only. Backups are verified by restoring them into an isolated environment.\n"
+  },
+  {
+   "doc_id": "wenjunberx.md",
+   "text": "# Wenjunberx service runbook\n\nWenjunberx is an internal service owned by the Payments team.\n\n## Data retention\n\nThe retention period for Wenjunberx logs is 365 days. After that period the records are deleted automatically.\n\n## Hosting\n\nWenjunberx runs in the eu-north region. Access to production is granted per task and revoked automatically afterwards.\n\n## Security\n\nWenjunberx encrypts data at rest using RSA-4096. Keys are rotated every 3 months. Backups are verified by restoring them into an isolated environment.\n\n## Operations\n\nSupport for Wenjunberx is provided by a follow-the-sun rotation. Dependencies are listed in the architecture register together with their owners.\n"
+  },
+  {
+   "doc_id": "kelelcorx.md",
+   "text": "# Kelelcorx service runbook\n\nKelelcorx is an internal service owned by the Identity team.\n\n## Data retention\n\nThe retention period for Kelelcorx logs is 180 days. After that period the records are deleted automatically.\n\n## Hosting\n\nKelelcorx runs in the af-south region. Runbook steps are reviewed every quarter and updated after each major incident.\n\n## Security\n\nKelelcorx encrypts data at rest using ChaCha20. Keys are rotated every 12 months. Access to production is granted per task and revoked automatically afterwards.\n\n## Operations\n\nSupport for Kelelcorx is provided around the clock. Backups are verified by restoring them into an isolated environment.\n"
+  },
+  {
+   "doc_id": "zelkelx.md",
+   "text": "# Zelkelx service runbook\n\nZelkelx is an internal service owned by the Analytics team.\n\n## Data retention\n\nThe retention period for Zelkelx logs is 30 days. After that period the records are deleted automatically.\n\n## Hosting\n\nZelkelx runs in the me-central region. Access to production is granted per task and revoked automatically afterwards.\n\n## Security\n\nZelkelx encrypts data at rest using AES-256. Keys are rotated every 6 months. Runbook steps are reviewed every quarter and updated after each major incident.\n\n## Operations\n\nSupport for Zelkelx is provided around the clock. Dependencies are listed in the architecture register together with their owners.\n"
+  },
+  {
+   "doc_id": "salaltorx.md",
+   "text": "# Salaltorx service runbook\n\nSalaltorx is an internal service owned by the Messaging team.\n\n## Data retention\n\nThe retention period for Salaltorx logs is 180 days. After that period the records are deleted automatically.\n\n## Hosting\n\nSalaltorx runs in the ca-central region. Backups are verified by restoring them into an isolated environment.\n\n## Security\n\nSalaltorx encrypts data at rest using AES-256. Keys are rotated every 12 months. Feature flags are cleaned up within two sprints of a full rollout.\n\n## Operations\n\nSupport for Salaltorx is provided around the clock. Access to production is granted per task and revoked automatically afterwards.\n"
+  },
+  {
+   "doc_id": "corulx.md",
+   "text": "# Corulx service runbook\n\nCorulx is an internal service owned by the Identity team.\n\n## Data retention\n\nThe retention period for Corulx logs is 90 days. After that period the records are deleted automatically.\n\n## Hosting\n\nCorulx runs in the sa-east region. Capacity is planned against the traffic forecast published at the start of the year.\n\n## Security\n\nCorulx encrypts data at rest using ChaCha20. Keys are rotated every 6 months. Runbook steps are reviewed every quarter and updated after each major incident.\n\n## Operations\n\nSupport for Corulx is provided by a follow-the-sun rotation. Dashboards for latency and error budgets are linked from the internal portal.\n"
+  },
+  {
+   "doc_id": "ovovrosx.md",
+   "text": "# Ovovrosx service runbook\n\nOvovrosx is an internal service owned by the Identity team.\n\n## Data retention\n\nThe retention period for Ovovrosx logs is 365 days. After that period the records are deleted automatically.\n\n## Hosting\n\nOvovrosx runs in the af-south region. Access to production is granted per task and revoked automatically afterwards.\n\n## Security\n\nOvovrosx encrypts data at rest using AES-256. Keys are rotated every 6 months. Feature flags are cleaned up within two sprints of a full rollout.\n\n## Operations\n\nSupport for Ovovrosx is provided by a follow-the-sun rotation. Capacity is planned against the traffic forecast published at the start of the year.\n"
+  },
+  {
+   "doc_id": "pelalx.md",
+   "text": "# Pelalx service runbook\n\nPelalx is an internal service owned by the Billing team.\n\n## Data retention\n\nThe retention period for Pelalx logs is 730 days. After that period the records are deleted automatically.\n\n## Hosting\n\nPelalx runs in the eu-north region. Capacity is planned against the traffic forecast published at the start of the year.\n\n## Security\n\nPelalx encrypts data at rest using RSA-4096. Keys are rotated every 12 months. Feature flags are cleaned up within two sprints of a full rollout.\n\n## Operations\n\nSupport for Pelalx is provided by a follow-the-sun rotation. Access to production is granted per task and revoked automatically afterwards.\n"
+  },
+  {
+   "doc_id": "isallorx.md",
+   "text": "# Isallorx service runbook\n\nIsallorx is an internal service owned by the Platform team.\n\n## Data retention\n\nThe retention period for Isallorx logs is 60 days. After that period the records are deleted automatically.\n\n## Hosting\n\nIsallorx runs in the ca-central region. Dashboards for latency and error budgets are linked from the internal portal.\n\n## Security\n\nIsallorx encrypts data at rest using AES-128. Keys are rotated every 12 months. Access to production is granted per task and revoked automatically afterwards.\n\n## Operations\n\nSupport for Isallorx is provided around the clock. Changes to this service follow the standard review process and are announced in the engineering channel.\n"
+  },
+  {
+   "doc_id": "verovpelx.md",
+   "text": "# Verovpelx service runbook\n\nVerovpelx is an internal service owned by the Billing team.\n\n## Data retention\n\nThe retention period for Verovpelx logs is 90 days. After that period the records are deleted automatically.\n\n## Hosting\n\nVerovpelx runs in the sa-east region. Backups are verified by restoring them into an isolated environment.\n\n## Security\n\nVerovpelx encrypts data at rest using ChaCha20. Keys are rotated every 3 months. Changes to this service follow the standard review process and are announced in the engineering channel.\n\n## Operations\n\nSupport for Verovpelx is provided by a follow-the-sun rotation. Access to production is granted per task and revoked automatically afterwards.\n"
+  },
+  {
+   "doc_id": "zelzelyorx.md",
+   "text": "# Zelzelyorx service runbook\n\nZelzelyorx is an internal service owned by the Billing team.\n\n## Data retention\n\nThe retention period for Zelzelyorx logs is 60 days. After that period the records are deleted automatically.\n\n## Hosting\n\nZelzelyorx runs in the sa-east region. Changes to this service follow the standard review process and are announced in the engineering channel.\n\n## Security\n\nZelzelyorx encrypts data at rest using AES-128. Keys are rotated every 12 months. Access to production is granted per task and revoked automatically afterwards.\n\n## Operations\n\nSupport for Zelzelyorx is provided during business hours only. Capacity is planned against the traffic forecast published at the start of the year.\n"
+  },
+  {
+   "doc_id": "elelx.md",
+   "text": "# Elelx service runbook\n\nElelx is an internal service owned by the Storage team.\n\n## Data retention\n\nThe retention period for Elelx logs is 90 days. After that period the records are deleted automatically.\n\n## Hosting\n\nElelx runs in the eu-west region. Dashboards for latency and error budgets are linked from the internal portal.\n\n## Security\n\nElelx encrypts data at rest using AES-256. Keys are rotated every 6 months. Capacity is planned against the traffic forecast published at the start of the year.\n\n## Operations\n\nSupport for Elelx is provided around the clock. Changes to this service follow the standard review process and are announced in the engineering channel.\n"
+  },
+  {
+   "doc_id": "ovpelx.md",
+   "text": "# Ovpelx service runbook\n\nOvpelx is an internal service owned by the Platform team.\n\n## Data retention\n\nThe retention period for Ovpelx logs is 60 days. After that period the records are deleted automatically.\n\n## Hosting\n\nOvpelx runs in the sa-east region. Runbook steps are reviewed every quarter and updated after each major incident.\n\n## Security\n\nOvpelx encrypts data at rest using RSA-4096. Keys are rotated every 12 months. Changes to this service follow the standard review process and are announced in the engineering channel.\n\n## Operations\n\nSupport for Ovpelx is provided by a follow-the-sun rotation. Access to production is granted per task and revoked automatically afterwards.\n"
+  },
+  {
+   "doc_id": "verkelwenx.md",
+   "text": "# Verkelwenx service runbook\n\nVerkelwenx is an internal service owned by the Compliance team.\n\n## Data retention\n\nThe retention period for Verkelwenx logs is 180 days. After that period the records are deleted automatically.\n\n## Hosting\n\nVerkelwenx runs in the ap-east region. Feature flags are cleaned up within two sprints of a full rollout.\n\n## Security\n\nVerkelwenx encrypts data at rest using AES-256. Keys are rotated every 3 months. Capacity is planned against the traffic forecast published at the start of the year.\n\n## Operations\n\nSupport for Verkelwenx is provided during business hours only. Backups are verified by restoring them into an isolated environment.\n"
+  },
+  {
+   "doc_id": "verwenx.md",
+   "text": "# Verwenx service runbook\n\nVerwenx is an internal service owned by the Platform team.\n\n## Data retention\n\nThe retention period for Verwenx logs is 365 days. After that period the records are deleted automatically.\n\n## Hosting\n\nVerwenx runs in the ap-east region. Access to production is granted per task and revoked automatically afterwards.\n\n## Security\n\nVerwenx encrypts data at rest using ChaCha20. Keys are rotated every 12 months. Dashboards for latency and error budgets are linked from the internal portal.\n\n## Operations\n\nSupport for Verwenx is provided by a follow-the-sun rotation. Capacity is planned against the traffic forecast published at the start of the year.\n"
+  },
+  {
+   "doc_id": "ulelx.md",
+   "text": "# Ulelx service runbook\n\nUlelx is an internal service owned by the Messaging team.\n\n## Data retention\n\nThe retention period for Ulelx logs is 180 days. After that period the records are deleted automatically.\n\n## Hosting\n\nUlelx runs in the us-west region. Feature flags are cleaned up within two sprints of a full rollout.\n\n## Security\n\nUlelx encrypts data at rest using AES-256. Keys are rotated every 6 months. Dashboards for latency and error budgets are linked from the internal portal.\n\n## Operations\n\nSupport for Ulelx is provided around the clock. Runbook steps are reviewed every quarter and updated after each major incident.\n"
+  },
+  {
+   "doc_id": "zelberx.md",
+   "text": "# Zelberx service runbook\n\nZelberx is an internal service owned by the Identity team.\n\n## Data retention\n\nThe retention period for Zelberx logs is 180 days. After that period the records are deleted automatically.\n\n## Hosting\n\nZelberx runs in the eu-north region. Backups are verified by restoring them into an isolated environment.\n\n## Security\n\nZelberx encrypts data at rest using ChaCha20. Keys are rotated every 3 months. Feature flags are cleaned up within two sprints of a full rollout.\n\n## Operations\n\nSupport for Zelberx is provided by a follow-the-sun rotation. Capacity is planned against the traffic forecast published at the start of the year.\n"
+  },
+  {
+   "doc_id": "gorpelx.md",
+   "text": "# Gorpelx service runbook\n\nGorpelx is an internal service owned by the Platform team.\n\n## Data retention\n\nThe retention period for Gorpelx logs is 60 days. After that period the records are deleted automatically.\n\n## Hosting\n\nGorpelx runs in the eu-west region. Dependencies are listed in the architecture register together with their owners.\n\n## Security\n\nGorpelx encrypts data at rest using RSA-4096. Keys are rotated every 12 months. Changes to this service follow the standard review process and are announced in the engineering channel.\n\n## Operations\n\nSupport for Gorpelx is provided by a follow-the-sun rotation. Dashboards for latency and error budgets are linked from the internal portal.\n"
+  }
+ ],
+ "queries": [
+  {
+   "id": "d01",
+   "kind": "direct",
+   "question": "What is the retention period for Gorpelx logs?",
+   "relevant": [
+    "gorpelx.md"
+   ],
+   "expect": "60 days"
+  },
+  {
+   "id": "d02",
+   "kind": "direct",
+   "question": "In which region does Verovpelx run?",
+   "relevant": [
+    "verovpelx.md"
+   ],
+   "expect": "sa-east"
+  },
+  {
+   "id": "d03",
+   "kind": "direct",
+   "question": "Which algorithm does Kelelcorx use to encrypt data at rest?",
+   "relevant": [
+    "kelelcorx.md"
+   ],
+   "expect": "ChaCha20"
+  },
+  {
+   "id": "d04",
+   "kind": "direct",
+   "question": "Which team owns Ovulx?",
+   "relevant": [
+    "ovulx.md"
+   ],
+   "expect": "Platform"
+  },
+  {
+   "id": "d05",
+   "kind": "direct",
+   "question": "How is support for Ovovrosx provided?",
+   "relevant": [
+    "ovovrosx.md"
+   ],
+   "expect": "by a follow-the-sun rotation"
+  },
+  {
+   "id": "d06",
+   "kind": "direct",
+   "question": "What is the retention period for Verkelwenx logs?",
+   "relevant": [
+    "verkelwenx.md"
+   ],
+   "expect": "180 days"
+  },
+  {
+   "id": "d07",
+   "kind": "direct",
+   "question": "In which region does Salgorquinx run?",
+   "relevant": [
+    "salgorquinx.md"
+   ],
+   "expect": "ap-south"
+  },
+  {
+   "id": "d08",
+   "kind": "direct",
+   "question": "Which algorithm does Ovpelx use to encrypt data at rest?",
+   "relevant": [
+    "ovpelx.md"
+   ],
+   "expect": "RSA-4096"
+  },
+  {
+   "id": "d09",
+   "kind": "direct",
+   "question": "Which team owns Ovisx?",
+   "relevant": [
+    "ovisx.md"
+   ],
+   "expect": "Payments"
+  },
+  {
+   "id": "d10",
+   "kind": "direct",
+   "question": "How is support for Corulx provided?",
+   "relevant": [
+    "corulx.md"
+   ],
+   "expect": "by a follow-the-sun rotation"
+  },
+  {
+   "id": "d11",
+   "kind": "direct",
+   "question": "What is the retention period for Elelx logs?",
+   "relevant": [
+    "elelx.md"
+   ],
+   "expect": "90 days"
+  },
+  {
+   "id": "d12",
+   "kind": "direct",
+   "question": "In which region does Isallorx run?",
+   "relevant": [
+    "isallorx.md"
+   ],
+   "expect": "ca-central"
+  },
+  {
+   "id": "d13",
+   "kind": "direct",
+   "question": "Which algorithm does Isgorx use to encrypt data at rest?",
+   "relevant": [
+    "isgorx.md"
+   ],
+   "expect": "AES-256"
+  },
+  {
+   "id": "d14",
+   "kind": "direct",
+   "question": "Which team owns Vermarx?",
+   "relevant": [
+    "vermarx.md"
+   ],
+   "expect": "Storage"
+  },
+  {
+   "id": "d15",
+   "kind": "direct",
+   "question": "How is support for Zelkelx provided?",
+   "relevant": [
+    "zelkelx.md"
+   ],
+   "expect": "around the clock"
+  },
+  {
+   "id": "d16",
+   "kind": "direct",
+   "question": "What is the retention period for Yorhalquinx logs?",
+   "relevant": [
+    "yorhalquinx.md"
+   ],
+   "expect": "30 days"
+  },
+  {
+   "id": "d17",
+   "kind": "direct",
+   "question": "In which region does Verwenx run?",
+   "relevant": [
+    "verwenx.md"
+   ],
+   "expect": "ap-east"
+  },
+  {
+   "id": "d18",
+   "kind": "direct",
+   "question": "Which algorithm does Ulelx use to encrypt data at rest?",
+   "relevant": [
+    "ulelx.md"
+   ],
+   "expect": "AES-256"
+  },
+  {
+   "id": "d19",
+   "kind": "direct",
+   "question": "Which team owns Pelalx?",
+   "relevant": [
+    "pelalx.md"
+   ],
+   "expect": "Billing"
+  },
+  {
+   "id": "d20",
+   "kind": "direct",
+   "question": "How is support for Berquinx provided?",
+   "relevant": [
+    "berquinx.md"
+   ],
+   "expect": "by a follow-the-sun rotation"
+  },
+  {
+   "id": "d21",
+   "kind": "direct",
+   "question": "What is the retention period for Ovkelx logs?",
+   "relevant": [
+    "ovkelx.md"
+   ],
+   "expect": "365 days"
+  },
+  {
+   "id": "d22",
+   "kind": "direct",
+   "question": "In which region does Berberx run?",
+   "relevant": [
+    "berberx.md"
+   ],
+   "expect": "ca-central"
+  },
+  {
+   "id": "d23",
+   "kind": "direct",
+   "question": "Which algorithm does Torovelx use to encrypt data at rest?",
+   "relevant": [
+    "torovelx.md"
+   ],
+   "expect": "AES-128"
+  },
+  {
+   "id": "d24",
+   "kind": "direct",
+   "question": "Which team owns Junquinfax?",
+   "relevant": [
+    "junquinfax.md"
+   ],
+   "expect": "Identity"
+  },
+  {
+   "id": "d25",
+   "kind": "direct",
+   "question": "How is support for Marcoralx provided?",
+   "relevant": [
+    "marcoralx.md"
+   ],
+   "expect": "during business hours only"
+  },
+  {
+   "id": "d26",
+   "kind": "direct",
+   "question": "What is the retention period for Ulmardunx logs?",
+   "relevant": [
+    "ulmardunx.md"
+   ],
+   "expect": "180 days"
+  },
+  {
+   "id": "d27",
+   "kind": "direct",
+   "question": "In which region does Wenjunberx run?",
+   "relevant": [
+    "wenjunberx.md"
+   ],
+   "expect": "eu-north"
+  },
+  {
+   "id": "d28",
+   "kind": "direct",
+   "question": "Which algorithm does Zelpelfax use to encrypt data at rest?",
+   "relevant": [
+    "zelpelfax.md"
+   ],
+   "expect": "AES-128"
+  },
+  {
+   "id": "d29",
+   "kind": "direct",
+   "question": "Which team owns Zelzelyorx?",
+   "relevant": [
+    "zelzelyorx.md"
+   ],
+   "expect": "Billing"
+  },
+  {
+   "id": "d30",
+   "kind": "direct",
+   "question": "How is support for Halberberx provided?",
+   "relevant": [
+    "halberberx.md"
+   ],
+   "expect": "during business hours only"
+  },
+  {
+   "id": "p01",
+   "kind": "paraphrase",
+   "question": "What cipher protects Rosyorovx stored data?",
+   "relevant": [
+    "rosyorovx.md"
+   ],
+   "expect": "AES-128"
+  },
+  {
+   "id": "p02",
+   "kind": "paraphrase",
+   "question": "Who is responsible for Corcorx?",
+   "relevant": [
+    "corcorx.md"
+   ],
+   "expect": "Billing"
+  },
+  {
+   "id": "p03",
+   "kind": "paraphrase",
+   "question": "When can someone be reached for Alnoryorx incidents?",
+   "relevant": [
+    "alnoryorx.md"
+   ],
+   "expect": "around the clock"
+  },
+  {
+   "id": "p04",
+   "kind": "paraphrase",
+   "question": "For how long does Algorfax hold on to its log records?",
+   "relevant": [
+    "algorfax.md"
+   ],
+   "expect": "2555 days"
+  },
+  {
+   "id": "p05",
+   "kind": "paraphrase",
+   "question": "Where is Tormarx hosted?",
+   "relevant": [
+    "tormarx.md"
+   ],
+   "expect": "ca-central"
+  },
+  {
+   "id": "p06",
+   "kind": "paraphrase",
+   "question": "What cipher protects Zelberx stored data?",
+   "relevant": [
+    "zelberx.md"
+   ],
+   "expect": "ChaCha20"
+  },
+  {
+   "id": "p07",
+   "kind": "paraphrase",
+   "question": "Who is responsible for Norcorsalx?",
+   "relevant": [
+    "norcorsalx.md"
+   ],
+   "expect": "Billing"
+  },
+  {
+   "id": "p08",
+   "kind": "paraphrase",
+   "question": "When can someone be reached for Junhalx incidents?",
+   "relevant": [
+    "junhalx.md"
+   ],
+   "expect": "by a follow-the-sun rotation"
+  },
+  {
+   "id": "p09",
+   "kind": "paraphrase",
+   "question": "For how long does Ultorzelx hold on to its log records?",
+   "relevant": [
+    "ultorzelx.md"
+   ],
+   "expect": "30 days"
+  },
+  {
+   "id": "p10",
+   "kind": "paraphrase",
+   "question": "Where is Salaltorx hosted?",
+   "relevant": [
+    "salaltorx.md"
+   ],
+   "expect": "ca-central"
+  },
+  {
+   "id": "p11",
+   "kind": "paraphrase",
+   "question": "What cipher protects Rosyorovx stored data?",
+   "relevant": [
+    "rosyorovx.md"
+   ],
+   "expect": "AES-128"
+  },
+  {
+   "id": "p12",
+   "kind": "paraphrase",
+   "question": "Who is responsible for Corcorx?",
+   "relevant": [
+    "corcorx.md"
+   ],
+   "expect": "Billing"
+  },
+  {
+   "id": "p13",
+   "kind": "paraphrase",
+   "question": "When can someone be reached for Alnoryorx incidents?",
+   "relevant": [
+    "alnoryorx.md"
+   ],
+   "expect": "around the clock"
+  },
+  {
+   "id": "p14",
+   "kind": "paraphrase",
+   "question": "For how long does Algorfax hold on to its log records?",
+   "relevant": [
+    "algorfax.md"
+   ],
+   "expect": "2555 days"
+  },
+  {
+   "id": "p15",
+   "kind": "paraphrase",
+   "question": "Where is Tormarx hosted?",
+   "relevant": [
+    "tormarx.md"
+   ],
+   "expect": "ca-central"
+  },
+  {
+   "id": "m01",
+   "kind": "multi",
+   "question": "Which services run in the eu-west region?",
+   "relevant": [
+    "isgorx.md",
+    "elelx.md",
+    "gorpelx.md"
+   ]
+  },
+  {
+   "id": "m02",
+   "kind": "multi",
+   "question": "Which services run in the eu-north region?",
+   "relevant": [
+    "yorhalquinx.md",
+    "vermarx.md",
+    "wenjunberx.md",
+    "pelalx.md",
+    "zelberx.md"
+   ]
+  },
+  {
+   "id": "m03",
+   "kind": "multi",
+   "question": "Which services run in the us-west region?",
+   "relevant": [
+    "marcoralx.md",
+    "alnoryorx.md",
+    "ulmardunx.md",
+    "corcorx.md",
+    "junhalx.md",
+    "junquinfax.md",
+    "ulelx.md"
+   ]
+  },
+  {
+   "id": "m04",
+   "kind": "multi",
+   "question": "Which services run in the ap-south region?",
+   "relevant": [
+    "salgorquinx.md",
+    "norcorsalx.md"
+   ]
+  },
+  {
+   "id": "m05",
+   "kind": "multi",
+   "question": "Which services run in the ap-east region?",
+   "relevant": [
+    "halberberx.md",
+    "verkelwenx.md",
+    "verwenx.md"
+   ]
+  },
+  {
+   "id": "m06",
+   "kind": "multi",
+   "question": "Which services run in the sa-east region?",
+   "relevant": [
+    "berquinx.md",
+    "corulx.md",
+    "verovpelx.md",
+    "zelzelyorx.md",
+    "ovpelx.md"
+   ]
+  },
+  {
+   "id": "m07",
+   "kind": "multi",
+   "question": "Which services run in the me-central region?",
+   "relevant": [
+    "ultorzelx.md",
+    "zelpelfax.md",
+    "zelkelx.md"
+   ]
+  },
+  {
+   "id": "m08",
+   "kind": "multi",
+   "question": "Which services run in the af-south region?",
+   "relevant": [
+    "ovulx.md",
+    "kelelcorx.md",
+    "ovovrosx.md"
+   ]
+  },
+  {
+   "id": "m09",
+   "kind": "multi",
+   "question": "Which services run in the ca-central region?",
+   "relevant": [
+    "rosyorovx.md",
+    "tormarx.md",
+    "berberx.md",
+    "algorfax.md",
+    "ovisx.md",
+    "torovelx.md",
+    "salaltorx.md",
+    "isallorx.md"
+   ]
+  },
+  {
+   "id": "m10",
+   "kind": "multi",
+   "question": "Which services are owned by the Payments team?",
+   "relevant": [
+    "marcoralx.md",
+    "ovisx.md",
+    "wenjunberx.md"
+   ]
+  },
+  {
+   "id": "m11",
+   "kind": "multi",
+   "question": "Which services are owned by the Identity team?",
+   "relevant": [
+    "alnoryorx.md",
+    "junquinfax.md",
+    "kelelcorx.md",
+    "corulx.md",
+    "ovovrosx.md",
+    "zelberx.md"
+   ]
+  },
+  {
+   "id": "m12",
+   "kind": "multi",
+   "question": "Which services are owned by the Search team?",
+   "relevant": [
+    "ultorzelx.md",
+    "halberberx.md"
+   ]
+  },
+  {
+   "id": "m13",
+   "kind": "multi",
+   "question": "Which services are owned by the Billing team?",
+   "relevant": [
+    "berberx.md",
+    "salgorquinx.md",
+    "norcorsalx.md",
+    "corcorx.md",
+    "isgorx.md",
+    "pelalx.md",
+    "verovpelx.md",
+    "zelzelyorx.md"
+   ]
+  },
+  {
+   "id": "m14",
+   "kind": "multi",
+   "question": "Which services are owned by the Platform team?",
+   "relevant": [
+    "ovulx.md",
+    "yorhalquinx.md",
+    "berquinx.md",
+    "isallorx.md",
+    "ovpelx.md",
+    "verwenx.md",
+    "gorpelx.md"
+   ]
+  },
+  {
+   "id": "m15",
+   "kind": "multi",
+   "question": "Which services are owned by the Messaging team?",
+   "relevant": [
+    "ulmardunx.md",
+    "algorfax.md",
+    "salaltorx.md",
+    "ulelx.md"
+   ]
+  },
+  {
+   "id": "u01",
+   "kind": "unanswerable",
+   "relevant": [],
+   "question": "What is the retention period for Halxanx logs?"
+  },
+  {
+   "id": "u02",
+   "kind": "unanswerable",
+   "relevant": [],
+   "question": "What is the retention period for Fakeltorx logs?"
+  },
+  {
+   "id": "u03",
+   "kind": "unanswerable",
+   "relevant": [],
+   "question": "What is the retention period for Gorgoryorx logs?"
+  },
+  {
+   "id": "u04",
+   "kind": "unanswerable",
+   "relevant": [],
+   "question": "What is the retention period for Dunelx logs?"
+  },
+  {
+   "id": "u05",
+   "kind": "unanswerable",
+   "relevant": [],
+   "question": "What is the retention period for Elxanx logs?"
+  },
+  {
+   "id": "u06",
+   "kind": "unanswerable",
+   "relevant": [],
+   "question": "What is the capital of Atlantis?"
+  },
+  {
+   "id": "u07",
+   "kind": "unanswerable",
+   "relevant": [],
+   "question": "Who won the regional chess tournament last year?"
+  },
+  {
+   "id": "u08",
+   "kind": "unanswerable",
+   "relevant": [],
+   "question": "How many moons does the planet Zorbon have?"
+  },
+  {
+   "id": "u09",
+   "kind": "unanswerable",
+   "relevant": [],
+   "question": "What is the recipe for the cafeteria soup?"
+  },
+  {
+   "id": "u10",
+   "kind": "unanswerable",
+   "relevant": [],
+   "question": "Which airline serves the new northern airport?"
+  }
+ ]
+}

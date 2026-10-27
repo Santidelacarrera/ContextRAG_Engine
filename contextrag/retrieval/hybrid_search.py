@@ -5,6 +5,7 @@ import threading
 from typing import Sequence
 
 from ..core.config import Settings
+from ..core.tracing import NULL_TRACER, Tracer
 from ..core.models import ChildChunk, Context, ParentChunk
 from .bm25 import BM25Index, IncrementalBM25Index
 from .reranker import Reranker
@@ -57,6 +58,9 @@ class HybridIndex:
     def doc_hash(self, tenant: str, doc_id: str) -> str | None:
         return self.store.doc_hash(tenant, doc_id)
 
+    def doc_acl(self, tenant: str, doc_id: str) -> tuple[str, ...] | None:
+        return self.store.doc_acl(tenant, doc_id)
+
     def list_documents(self, tenant: str) -> list[dict]:
         return self.store.list_documents(tenant)
 
@@ -67,10 +71,12 @@ class HybridIndex:
 class HybridRetriever:
     def __init__(self, index: HybridIndex, embedder, reranker: Reranker, settings: Settings):
         self.index, self.embedder, self.reranker, self.cfg = index, embedder, reranker, settings
+        self.tracer: Tracer = NULL_TRACER  # ContextRAG replaces it; stages are embed, retrieve and rerank
 
     def search_children(self, query: str, tenant: str, groups: frozenset[str] = frozenset()) -> list[tuple[ChildChunk, float]]:
-        qvec = self.embedder.embed([query])[0]
-        with self.index.lock:
+        with self.tracer.span("embed", chunks=1):
+            qvec = self.embedder.embed([query])[0]
+        with self.tracer.span("retrieve"), self.index.lock:
             dense = [c for c, _ in self.index.store.dense(qvec, tenant, groups, self.cfg.dense_k)]
             sparse = [c for c, _ in self.index.bm25.search(query, tenant, groups, self.cfg.sparse_k)]
         return reciprocal_rank_fusion([dense, sparse], self.cfg.rrf_k)
@@ -87,7 +93,8 @@ class HybridRetriever:
         fused = self.search_children(query, tenant, groups)[: self.cfg.rerank_candidates]
         if not fused:
             return []
-        scores = self.reranker.score(query, [c.text for c, _ in fused])
+        with self.tracer.span("rerank", candidates=len(fused)):
+            scores = self.reranker.score(query, [c.text for c, _ in fused])
         best: dict[str, float] = {}
         best_child: dict[str, ChildChunk] = {}
         for (child, _), s in zip(fused, scores, strict=True):

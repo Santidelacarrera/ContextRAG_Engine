@@ -30,6 +30,7 @@ class CrossEncoderReranker:
         from sentence_transformers import CrossEncoder
 
         self._m = CrossEncoder(model)
+        self.model_name = model  # part of the answer-cache key
         self.min_score = min_score
 
     def score(self, query, passages):
@@ -45,6 +46,7 @@ class CohereReranker:
         import cohere
 
         self._c, self._model, self.min_score = cohere.ClientV2(api_key), model, min_score
+        self.model_name = model  # part of the answer-cache key
 
     def score(self, query, passages):
         if not passages:
@@ -82,6 +84,11 @@ class BoundedReranker:
     @property
     def min_score(self):
         return getattr(self._inner, "min_score", None)
+
+    @property
+    def model_name(self):
+        """Identity of the wrapped model, so the answer cache distinguishes checkpoints behind the same wrapper."""
+        return f"{type(self._inner).__name__}:{getattr(self._inner, 'model_name', None)}"
 
     def score(self, query, passages):
         from concurrent.futures import TimeoutError as FutureTimeout

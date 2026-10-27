@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from enum import Enum
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -85,6 +86,10 @@ class Answer:
     attempts: int = 0
     reason: str = ""
     cached: bool = False
+    # Optional structured context that does not fit the verified/fallback status: ``clarification`` (the question is
+    # ambiguous and what to ask), ``entity_resolution`` (names resolved through documented aliases) and ``conflicts``
+    # (sources that disagree). Empty for ordinary answers, and then omitted from the public response.
+    meta: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -105,6 +110,7 @@ class Answer:
             "sources": [{"index": s.index, "doc_id": s.parent.doc_id, "source": s.parent.source,
                          "start": s.parent.start, "end": s.parent.end, "page": s.parent.page,
                          "section": s.parent.section, "score": s.score} for s in self.sources],
+            **({"meta": self.meta} if self.meta else {}),
         }
 
     @classmethod
@@ -120,4 +126,4 @@ class Answer:
             p["acl"], p["page_breaks"] = tuple(p["acl"]), tuple(p.get("page_breaks", ()))
             sources.append(Context(s["index"], ParentChunk(**p), s.get("score", 0.0)))
         return cls(Status(d["status"]), d["question"], d["text"], d["confidence"], claims, sources,
-                   d["attempts"], d["reason"], d.get("cached", False))
+                   d["attempts"], d["reason"], d.get("cached", False), dict(d.get("meta") or {}))

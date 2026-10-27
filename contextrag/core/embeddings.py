@@ -9,6 +9,7 @@ from .text import content_tokens, stem
 
 class Embedder(Protocol):
     dim: int
+    model_id: str  # identity of the vector space: two embedders with the same dim are NOT interchangeable
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]: ...
 
@@ -18,6 +19,7 @@ class HashingEmbedder:
 
     def __init__(self, dim: int = 512):
         self.dim = dim
+        self.model_id = f"hashing-v1:{dim}"
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]:
         out = []
@@ -40,6 +42,7 @@ class SentenceTransformerEmbedder:
         self._m = SentenceTransformer(model)
         get_dim = getattr(self._m, "get_embedding_dimension", None) or self._m.get_sentence_embedding_dimension
         self.dim = get_dim()
+        self.model_id = f"sentence-transformers:{model}:{self.dim}"
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]:
         return self._m.encode(list(texts), normalize_embeddings=True).tolist()

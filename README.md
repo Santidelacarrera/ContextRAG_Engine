@@ -418,14 +418,198 @@ timeouts, concurrencia, valores fuera de rango). **No verificado:** cualquier pu
 (`RAGAS_INTEGRATION=1`) está escrito y omitido porque no hay claves ni acceso a los proveedores en este entorno. Con el
 paquete `ragas` 0.4.3 hace falta `langchain-community<0.4`; el extra `ragas` lo fija.
 
+**Límites de ingestión.** Antes de analizar un archivo se comprueba el tamaño (`CONTEXTRAG_MAX_DOCUMENT_BYTES`, 25 MB por
+defecto; HTTP 413) y que la firma coincida con el tipo declarado: un `.pdf` sin cabecera `%PDF-`, o un archivo de texto que
+empieza como PDF, ZIP, PNG, JPEG, GIF, ELF u OLE2, o que contiene bytes NUL, se rechaza (HTTP 422). Los PDF cifrados con
+contraseña, corruptos o con más de `CONTEXTRAG_MAX_PDF_PAGES` páginas (500 por defecto) también. Cada rechazo lleva un código
+estable (`too_large`, `signature_mismatch`, `binary_content`, `encrypted`, `too_many_pages`, `malformed_pdf`) y nunca repite
+el contenido ni el texto de error del analizador. Un PDF con solo contraseña de propietario (clave de usuario vacía) se
+abre. *Formatos:* PDF, Markdown, HTML, texto, código y los sufijos de `INGESTIBLE`; el texto se decodifica como UTF-8, de modo
+que UTF-16 se rechaza como binario. *Límite conocido:* el archivo se lee entero en memoria (acotado por el tamaño máximo); no
+hay extracción en streaming ni OCR (un PDF escaneado se rechaza por no tener texto).
+
+**Controles de seguridad del prompt y de la salida.**
+- El nombre de origen (`source`) de un documento es dato no confiable: se reduce a un atributo sin `<`, `>`, `"`, `&`,
+  saltos de línea ni caracteres de control, con un máximo de 200 caracteres. Antes solo se sustituían las comillas dobles y un
+  nombre hostil podía cerrar la etiqueta `<passage>`, abrir una línea `SYSTEM:` fuera de ella y fabricar un pasaje falso.
+- Una respuesta con imagen markdown, `<img>`, `<script>`, `<iframe>`, `javascript:` y similares se rechaza aunque sea fiel a la
+  evidencia (un documento envenenado podría usarla para exfiltrar datos desde un cliente que renderice imágenes). Se pide una
+  reescritura y, si persiste, se abstiene. Los enlaces normales se permiten. Se paga con respuestas rechazadas sobre
+  documentación que contenga HTML.
+- **Cobertura de entidades.** El NLI demuestra que una afirmación se deduce de un pasaje, no que responda a la pregunta. Con la
+  pregunta «¿Cuál es el periodo de retención de los logs de Halxanx?» (un servicio que no existe), el sistema devolvía como
+  *verificadas* afirmaciones fieles sobre otros servicios. Ahora, si la pregunta nombra algo (palabra con mayúscula que no abre
+  frase, o identificador con dígitos como `AES-256`) que la evidencia no menciona en absoluto, se abstiene sin llamar al modelo
+  (`CONTEXTRAG_REQUIRE_QUESTION_ENTITIES`, activado por defecto). **Límites:** solo mira formas de superficie; un alias en los
+  documentos («el sistema de tickets» para «Jira») provoca una abstención innecesaria, y una pregunta que no nombra nada, o que
+  pide un atributo equivocado, no se detecta. No se ha medido la tasa de falsas abstenciones con preguntas reales.
+
+**Benchmark reproducible (`python -m contextrag bench`).** Corpus sintético versionado (40 runbooks ficticios, 70 preguntas:
+30 directas, 15 parafraseadas, 15 multi-documento con 2 a 8 documentos relevantes, 10 sin respuesta), generado con semilla 11
+y verificable con `python -m contextrag.eval.bench_corpus --check`. Relevancia a nivel de documento. Pila sin conexión
+(embedder hashing, reranker y NLI léxicos, generador extractivo): **describe el comportamiento de la tubería en este corpus, no
+la calidad de recuperación con modelos reales ni con documentos reales.**
+
+| estrategia | R@1 | R@5 | R@10 | MRR | nDCG@5 | p50 ms | p95 ms |
+|---|---|---|---|---|---|---|---|
+| bm25 | 0.817 | 0.975 | 1.000 | 1.000 | 1.000 | 0.15 | 0.36 |
+| dense (hashing) | 0.747 | 0.892 | 0.931 | 0.930 | 0.890 | 0.08 | 0.14 |
+| hybrid (RRF) | 0.809 | 0.939 | 0.978 | 0.992 | 0.962 | 0.23 | 0.32 |
+| hybrid + rerank | 0.817 | 0.971 | 0.994 | 1.000 | 0.997 | 1.48 | 2.22 |
+
+Latencias en ms con 120 muestras por estrategia (60 preguntas × 2 repeticiones), dependientes de la máquina; no forman parte de
+la línea base. **Lectura honesta:** en este corpus, que se resuelve por el nombre (término raro), BM25 solo iguala o supera al
+híbrido; el reranker recupera casi toda la diferencia del RRF (nDCG@5 0.962 → 0.997) sin superar a BM25. La fusión no mejora
+aquí y no se afirma que lo haga en general. Fundamentación sobre 45 preguntas con respuesta: verificadas 0.667 (las 15
+parafraseadas se abstienen porque el generador extractivo no sabe reformular), correctas 0.667, **verificadas pero erróneas
+0.0**, precisión de citas 0.70 (se mide sobre la evidencia en que se apoya cada afirmación; el generador extractivo une frases
+de varios pasajes), cobertura de citas 1.0. Sobre las 10 sin respuesta: abstención 1.0 (0.5 con la cobertura de entidades
+desactivada); son solo 10 preguntas y cinco nombran una entidad inexistente, el patrón al que apunta el control.
+`--check-baseline` falla si una métrica baja del suelo registrado en `retrieval_bench_baseline.json`. **No medido:** consumo de
+tokens y coste, rendimiento bajo concurrencia, calidad con embeddings semánticos y reranker entrenado, documentos reales.
+
+**Dependencias.** `pip-audit` sobre las dependencias de ejecución encontró 18 avisos en `pypdf` 6.17.0 (todos corregidos en
+6.21.2) y ninguno en los otros quince paquetes auditados; el suelo de `pypdf` pasó de `>=4` a `>=6.21.2` y una instalación nueva
+desde los extras no tiene avisos conocidos. La CI ejecuta `pip-audit` en cada cambio y cada lunes.
+
+**Cierre ordenado.** Al apagar la API se cierran el worker de compactación y las conexiones que la propia aplicación creó
+desde el entorno (no las que le pasa quien la integra).
+
 **Pendiente (no implementado o no verificado).**
+- **Fuentes contradictorias:** no se detectan ni se comunican. El NLI sin conexión solo puntúa implicación; hace falta un
+  modelo con la clase *contradicción* y etiquetas para validar un umbral.
+- **Trazas OpenTelemetry y paneles:** no implementados. Hay ID de petición, métricas Prometheus y logs estructurados.
+- **Comparación antes/después de la recuperación:** no aplica en esta iteración (no se cambió el algoritmo); el benchmark fija la
+  línea base. Los empates se resuelven por posición desde el cambio anterior.
+- **Benchmark con documentos reales y modelos reales:** no hay documentos autorizados en el repositorio.
 - **Puntuaciones reales del juez RAGAS:** no ejecutadas (sin claves ni red a los proveedores).
-- **Calibración sobre documentos reales:** no hay documentos de validación con etiquetas en el repositorio. Los resultados
-  son sintéticos. Ningún valor de producción (tamaños de chunk, `RERANK_MIN_SCORE`, umbral NLI) puede darse por validado.
+- **Calibración sobre documentos reales:** los resultados son sintéticos; ningún valor de producción (tamaños de chunk,
+  `RERANK_MIN_SCORE`, umbral NLI) puede darse por validado.
 - **Reranker BGE:** el adaptador `CrossEncoderReranker` existe, pero no se ha verificado contra un modelo real: en el
   entorno de desarrollo `torch`, `sentence-transformers` y el host de Hugging Face no estaban disponibles.
 - **Adaptador Cohere:** la validación de la respuesta está probada con un cliente simulado; no contra la API real.
 - **Caché de prompts de Anthropic:** la forma de la petición está probada; el efecto real no se ha medido contra la API.
 - **Memoria:** el resumen es solo extractivo; no hay caducidad (`expires_at`) ni redacción de datos personales, ni
   rotación de `MASTER_KEY`.
-- **Métricas de operación de la memoria:** cubiertas arriba; no hay alertas ni paneles.
+- **Redacción de datos sensibles en logs:** los logs de consulta no incluyen el contenido de documentos, pero no hay un filtro
+  genérico de datos personales.
+
+---
+
+## Estado para un piloto jurídico (fase de endurecimiento)
+
+La documentación completa del piloto (API, claves, retención, eliminación, incidentes, modelo de amenazas y lista de comprobación) está en [`docs/PILOT.md`](docs/PILOT.md). La licencia y su estado, en [`LICENSING.md`](LICENSING.md).
+
+**Aviso.** Este sistema no está listo para documentos confidenciales de clientes. Lo que sigue separa lo implementado de lo
+verificado con pruebas, y lo verificado con datos sintéticos de lo que solo se puede verificar con datos y servicios reales.
+Pasar las pruebas no es evidencia de seguridad para producción, de cumplimiento de ninguna norma ni de confidencialidad
+garantizada. No se ha hecho ninguna evaluación de seguridad externa.
+
+### Arquitectura y flujo de datos
+
+```
+ingesta:   archivo → validación (tamaño, firma, PDF cifrado/páginas) → análisis (PDF/HTML sin texto oculto)
+           → fragmentos padre/hijo (tokens) → embeddings → índice vectorial (Qdrant o memoria) + BM25
+consulta:  pregunta → recuperación híbrida (filtro ACL antes de devolver) → reranking (opcional, con tiempo máximo)
+           → cuarentena de pasajes con patrones de inyección → alias / ambigüedad / entidades
+           → conflictos entre fuentes → generación (solo con evidencia) → verificación por afirmación (NLI)
+           → control de salida (contenido activo) → respuesta con citas (documento, página, desplazamientos)
+```
+
+Cada etapa tiene un tramo de traza (`ingest`, `chunk`, `embed`, `index`, `retrieve`, `rerank`, `context`, `entities`,
+`conflicts`, `generate`, `verify`, `verify.nli`, `citations`). Sin `CONTEXTRAG_TRACING=otel` solo se cuentan llamadas, errores
+y milisegundos por etapa en `/metrics`; con él se exportan tramos por OpenTelemetry (ver «Observabilidad»).
+
+### Controles de seguridad, con sus límites
+
+| Control | Qué hace | Límite conocido |
+|---|---|---|
+| Autenticación por clave (`CONTEXTRAG_KEYS_FILE`) | Cada clave liga inquilino, casos (grupos) y rol; solo se guarda el hash SHA-256. | Sin rotación de claves de API ni expiración; la gestión del fichero es manual. |
+| Casos dentro de un inquilino | Un admin con casos solo escribe y borra en sus casos; el listado, la auditoría y el borrado respetan el caso; un caso ajeno devuelve 404 idéntico al inexistente. | Un caso es un grupo ACL: no hay jerarquía ni roles por documento. |
+| Identificador de conversación | Se liga al usuario: otro usuario con el mismo identificador obtiene una conversación distinta y vacía. | Solo para la memoria conversacional. |
+| `CONTEXTRAG_REQUIRE_AUTH=true` | El servidor se niega a arrancar en modo abierto o con secreto compartido. | Hay que activarlo a mano; por defecto no está activado en el código, sí en `docker-compose`. |
+| Inyección por el nombre del archivo | Los metadatos se reducen a texto sin etiquetas, comillas, saltos de línea ni caracteres de control. | Lista de caracteres; no es un clasificador. |
+| Inyección en el contenido | Pasajes con patrones típicos (ignora instrucciones, «system:», revelar la clave, enviar la conversación a una URL) se retiran de la generación y se cuentan en `quarantined_passages_total`. | Lista de patrones: una frase redactada como hecho, otro idioma o un texto ofuscado la pasan. Un documento envenenado que afirme un dato falso se cita como cualquier otro. |
+| Contenido activo en la respuesta | Imágenes markdown, `<img>`, `<script>`, `javascript:` y similares se rechazan. | Los enlaces normales se permiten: un enlace puede llevar datos en su URL. |
+| HTML oculto | Se descarta el texto con `hidden`, `aria-hidden` o estilos que lo ocultan, y los comentarios. | El texto oculto por hoja de estilo externa o por color no se detecta sin renderizar. |
+| Errores | Respuesta genérica con id de petición; los mensajes de excepciones y de proveedores no se devuelven ni se registran. | Los tracebacks solo aparecen con `CONTEXTRAG_DEBUG_ERRORS` (no usar con datos reales). |
+| Redacción en logs | RUT, correos, teléfonos, números de causa, claves y contraseñas de URL se sustituyen antes de escribirse. | Patrones, no comprensión: nombres y direcciones no se detectan. |
+| Cifrado en reposo | Texto de fragmentos (Qdrant), memoria conversacional y caché (Redis) con clave derivada por inquilino. | Vectores, metadatos (nombres de archivo, ids, fechas) y auditoría en claro. Clave en variable de entorno, sin gestor de secretos. |
+| Rotación de `MASTER_KEY` | `MASTER_KEY_PREVIOUS` + `contextrag rotate-key`: descifra con todas las claves, re-cifra lo que queda con la anterior, verifica cada registro antes de reemplazarlo. | Probada con SQLite y con Qdrant en memoria, no con un Qdrant servidor ni con datos reales. |
+| Caché no disponible | Se degrada a «sin caché», pero una invalidación fallida se recuerda y bloquea las lecturas de caché hasta aplicarse. | Verificado con un doble de caché, no con Redis real. |
+| Contrapresión | Pasado `CONTEXTRAG_BUSY_WAIT_SECONDS`, 503 con `Retry-After`. | Límites por proceso; sin límite por usuario. |
+
+**Auditoría de dependencias.** `pip-audit` sobre las dependencias de ejecución: sin avisos conocidos tras subir `pypdf` a
+6.21.2 (la versión instalada tenía 18). La comprobación se repite en CI cada semana. No se ha auditado el contenedor con
+ninguna herramienta de escaneo de imágenes.
+
+### Qué debe configurarse antes de usar datos confidenciales
+
+1. `MASTER_KEY` de 32 bytes o más, generada al azar, guardada fuera del repositorio y con copia de seguridad separada: sin
+   ella los datos cifrados son irrecuperables.
+2. `CONTEXTRAG_KEYS_FILE` con una clave por usuario y caso; `CONTEXTRAG_REQUIRE_AUTH=true`.
+3. TLS delante de la API (el compose publica solo en 127.0.0.1; un proxy con TLS es responsabilidad del despliegue).
+4. Contraseñas de Postgres, Redis y Qdrant distintas de las de ejemplo (el compose no arranca sin ellas).
+5. Decidir la retención de la auditoría, de la memoria y de los logs; hoy la retención de auditoría existe
+   (`python -m contextrag retention`) pero no hay una política para logs ni para la caché.
+6. Revisar y aceptar que los vectores y los metadatos no están cifrados.
+
+### Cómo ejecutar las pruebas y los benchmarks
+
+```bash
+pip install -e ".[dev,api,pdf,security,memory,qdrant,redis,postgres,otel]" mypy pip-audit
+pytest -q                                        # pruebas unitarias e integración sin servicios externos
+ruff check contextrag tests && mypy contextrag --ignore-missing-imports
+python -m contextrag.eval.bench_corpus --check   # el corpus de recuperación es el generado
+python -m contextrag.eval.entity_corpus --check
+python -m contextrag bench --check-baseline      # recuperación y fundamentación (pila sin conexión)
+python -m contextrag eval                        # evaluación de seguridad heredada
+python -m contextrag loadtest --levels 1,4,8,16  # carga en proceso (comparar ejecuciones, no capacidad)
+pip-audit --local --skip-editable               # auditoría de dependencias instaladas (la misma que CI)
+```
+
+Los modelos reales (`EMBEDDER=bge`, `RERANKER=cross-encoder|cohere`, `NLI=deberta`, `LLM=anthropic|ollama`) no se han
+verificado en este repositorio. Para añadir uno: instálelo con su extra, configúrelo por variable de entorno, ejecute
+`python -m contextrag bench` y `python -m contextrag ragas` (que necesita `RAGAS_PROVIDER` y la clave del proveedor) y compare
+con la línea base. Ninguna comparación entre estrategias es válida sin esos datos en la misma máquina y con el mismo corpus.
+
+### Cómo verificar citas y abstenciones
+
+- Cada afirmación verificada trae `evidence` con documento, `start`, `end`, texto exacto y página cuando existe. Para
+  comprobarla independientemente: `document[start:end] == text`. `contextrag.eval.citations.citation_problems` lo hace por
+  respuesta.
+- Una respuesta de tipo `fallback` es una abstención; `reason` dice por qué (sin evidencia, conflicto, ambigüedad, entidad no
+  documentada, inyección retirada).
+- Una respuesta `verified` solo existe si cada afirmación está respaldada por un pasaje que menciona la entidad preguntada.
+
+### Evaluación con documentos sintéticos
+
+El corpus de entidades (`eval/entity_corpus.py`, 46 preguntas, 20 documentos) cubre alias, homónimos, entidades inexistentes,
+preguntas ambiguas y acceso restringido. `python -c "from contextrag.eval.entity_bench import run_entity_bench as r; print(r()['configs'])"` (no tiene línea de comandos propia)
+reporta falsas respuestas, falsas abstenciones, respuestas incorrectas y abstenciones correctas por configuración, y separa
+los casos conocidos fuera de la cifra principal.
+
+### Mediciones registradas (pila sin conexión, corpus sintético)
+
+Solo se citan resultados que se han ejecutado en este repositorio. Ver los ficheros JSON en `contextrag/eval/data/` y el
+informe de la sesión; no son evidencia de calidad con modelos reales.
+
+- **Entidades** (`alias_resolution`, configuración por defecto): falsas respuestas 0.0; falsas abstenciones 0.0; respuestas
+  incorrectas 0.0; abstenciones correctas 1.0; aclaraciones correctas 1.0. Sin control de entidades, falsas respuestas 0.86.
+  Sobre el conjunto principal; los 4 casos conocidos (`limit_*`) quedan fuera de esas cifras y se reportan aparte.
+- **Recuperación y fundamentación**: `python -m contextrag bench --check-baseline` sale con código 0 en esta sesión (ninguna métrica bajo su suelo registrado). Las cifras de la tabla de la sección anterior no se han vuelto a imprimir; la comprobación es la garantía vigente.
+- **Carga**: medida en esta máquina, en proceso y sin red; sirve para comparar ejecuciones, no para estimar usuarios.
+
+### Lista de comprobación previa al piloto
+
+| Estado | Elemento |
+|---|---|
+| Implementado y verificado con pruebas | Validación de subida, PDF cifrado/páginas/corrupto; casos y permisos en lectura, escritura, borrado, listado, auditoría y conversaciones; contenido activo y cuarentena de inyección; redacción de logs; cifrado y rotación de la clave con SQLite y Qdrant en memoria; caché resistente; contrapresión; alias, ambigüedad y conflicto estructurado; trazas y métricas por etapa. |
+| Implementado y verificado solo con dobles o datos sintéticos | Conflictos semánticos (`nli`, con un modelo de prueba); evaluación RAGAS (orquestación con un juez simulado); verificación de citas por documento y página; carga en proceso. |
+| Parcialmente verificado | `docker-compose` (valida la configuración y falla si faltan secretos; **no se ha levantado** porque no hay daemon Docker aquí); exportación OpenTelemetry (probada contra el SDK en memoria, no contra un colector real). |
+| Pendiente, no verificado | Modelos reales (BGE, DeBERTa, Cohere, Anthropic, Ollama); puntuaciones reales del juez; calibración con documentos reales; detección de contradicciones semánticas con modelo real; Redis y Postgres reales en CI; escaneo de imágenes de contenedor; prueba de penetración; revisión de cumplimiento normativo (no se afirma ninguno); retención de logs y caché; gestión de claves de API con caducidad. |
+
+**Riesgos que bloquean un piloto con datos reales** (ver el informe de la sesión para la clasificación): ausencia de
+evaluación con modelos reales; conflictos detectados por heurística; inyección y redacción por listas de patrones; vectores y
+metadatos en claro; clave maestra en variable de entorno; autenticación por fichero sin rotación; falta de prueba de
+despliegue real; ausencia de revisión externa de seguridad.

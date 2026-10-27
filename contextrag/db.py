@@ -84,7 +84,7 @@ class TenantDB:
         with self._admin_lock, self._admin.transaction():
             # several API workers may start at once: serialize the DDL across processes too
             self._admin.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"contextrag.schema.{TABLE}",))
-            row = self._admin.execute(f"SELECT relkind FROM pg_class WHERE oid = to_regclass('{TABLE}')").fetchone()
+            row = self._admin.execute("SELECT relkind FROM pg_class WHERE oid = to_regclass(%s)", (TABLE,)).fetchone()
             if row and row[0] != "p":
                 raise RuntimeError(f"{TABLE} exists but is not partitioned; apply "
                                    "deploy/migrations/001_retrieval_audit_partitioned.sql first")
@@ -117,9 +117,12 @@ class TenantDB:
 
     def log_retrieval(self, conn: Connection, record: dict) -> None:
         """Append one retrieval record inside the caller's tenant transaction (RLS WITH CHECK enforces the tenant)."""
+        from psycopg import sql
+
+        stmt = sql.SQL("""INSERT INTO {t} (id, tenant, user_id, query, top_k, fragments, doc_ids, latency_ms)
+                VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s)""").format(t=sql.Identifier(TABLE))
         conn.execute(
-            f"""INSERT INTO {TABLE} (id, tenant, user_id, query, top_k, fragments, doc_ids, latency_ms)
-                VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s)""",
+            stmt,
             (record["id"], record["tenant"], record["user"], record["query"], record["top_k"],
              record["fragments"], json.dumps(record["doc_ids"]), record["latency_ms"]))
 
