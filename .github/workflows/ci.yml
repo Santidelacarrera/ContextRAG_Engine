@@ -4,9 +4,15 @@ on:
   pull_request:
   schedule:
     - cron: "17 5 * * 1"  # weekly: new advisories appear without any code change
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       matrix:
         python: ["3.10", "3.12"]
@@ -20,6 +26,7 @@ jobs:
       - run: pip install -e ".[dev,api]"
       - run: ruff check contextrag tests
       - run: pip install mypy && mypy contextrag --ignore-missing-imports
+      - run: pip install bandit && bandit -q -r contextrag
       - run: pytest -q
       - name: Benchmark dataset is exactly what its generator produces
         run: python -m contextrag.eval.bench_corpus --check
@@ -50,3 +57,17 @@ jobs:
           python-version: "3.12"
       - run: pip install -e ".[api,pdf,security,memory,postgres,qdrant,redis]" pip-audit
       - run: pip-audit --local --skip-editable
+
+  image:
+    # the production image builds and the API starts and answers /healthz (no external services needed to boot offline)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f deploy/Dockerfile -t contextrag:ci .
+      - name: Container runs as non-root and /healthz answers
+        run: |
+          test "$(docker run --rm --entrypoint id contextrag:ci -u)" = "10001"
+          docker run -d --name api -p 8000:8000 -e CONTEXTRAG_REQUIRE_AUTH=false contextrag:ci
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8000/healthz && exit 0; sleep 2; done
+          docker logs api; exit 1
