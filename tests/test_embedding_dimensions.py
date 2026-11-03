@@ -54,6 +54,6 @@ def test_the_qdrant_store_refuses_a_wrong_size_vector_and_writes_nothing():
     store.add(p, c, HashingEmbedder(512).embed([x.text for x in c]))
     before = client.count(store.col).count
     p2, c2 = chunks("b.md", "Otro documento distinto.")
-    with pytest.raises(Exception, match="expected dim: 512|could not broadcast"  # wording differs between qdrant-client versions):
+    with pytest.raises(Exception, match="expected dim: 512|could not broadcast"):  # wording differs between qdrant-client versions
         store.add(p2, c2, HashingEmbedder(64).embed([x.text for x in c2]))
     assert client.count(store.col).count == before  # the batch was rejected as a whole

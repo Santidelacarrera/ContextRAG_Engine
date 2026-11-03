@@ -23,6 +23,7 @@ class _Server:
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))  # drain, else Windows resets the socket
                 outer.hits.append(self.path)
                 status, headers, body = routes.get(self.path, (404, {}, b""))
                 self.send_response(status)
