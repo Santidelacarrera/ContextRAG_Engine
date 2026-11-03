@@ -124,9 +124,9 @@ def main(argv: list[str] | None = None) -> int:
         key, digest, entry = new_entry(args.id, args.tenant, args.role, csv(args.groups), expires_at=expires)
         KeyStore({digest: entry})  # validates the entry (e.g. tenant required for non-ops roles)
         if args.add_to:
-            entries = json.loads(args.add_to.read_text()) if args.add_to.exists() else {}
+            entries = json.loads(args.add_to.read_text(encoding="utf-8")) if args.add_to.exists() else {}
             entries[digest] = entry
-            args.add_to.write_text(json.dumps(entries, indent=2))
+            args.add_to.write_text(json.dumps(entries, indent=2), encoding="utf-8")
             os.chmod(args.add_to, 0o600)
         else:
             print(json.dumps({digest: entry}, indent=2), file=sys.stderr)

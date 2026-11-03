@@ -114,8 +114,9 @@ def test_keys_file_loaded_from_env_and_keygen_cli(tmp_path, monkeypatch, capsys)
     admin_key = capsys.readouterr().out.strip()
     assert main(["keygen", "--id", "lia", "--tenant", "acme", "--groups", "legal,hr", "--add-to", str(f)]) == 0
     reader_key = capsys.readouterr().out.strip()
-    assert stat.S_IMODE(os.stat(f).st_mode) == 0o600
-    stored = f.read_text()
+    if os.name == "posix":  # Windows has no POSIX mode bits
+        assert stat.S_IMODE(os.stat(f).st_mode) == 0o600
+    stored = f.read_text(encoding="utf-8")
     assert admin_key not in stored and reader_key not in stored and hash_key(admin_key) in stored
     monkeypatch.setenv("CONTEXTRAG_KEYS_FILE", str(f))
     c = TestClient(create_app(factory.offline()))

@@ -101,7 +101,7 @@ def load_master_keys(env: "dict[str, str] | None" = None) -> tuple[bytes | None,
             raise ValueError(f"set {name} or {name}_FILE, not both")
         if path:
             st = os.stat(path)
-            if st.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+            if os.name == "posix" and st.st_mode & (stat.S_IRWXG | stat.S_IRWXO):  # Windows has no mode bits to check
                 raise ValueError(f"{name}_FILE must not be readable by group or others (use mode 0600)")
             with open(path, encoding="utf-8") as f:
                 return f.read()

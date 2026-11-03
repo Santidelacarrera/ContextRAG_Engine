@@ -96,6 +96,7 @@ def test_audit_retention_purge():
     old["ts"] = time.time() - 40 * 86400
     assert r.purge_audit(30) == 1 and old not in r.audit.records
     assert r.purge_audit(30) == 0
+    time.sleep(0.05)  # coarse clocks (Windows ~16 ms): the cutoff must be strictly after the records
     assert r.purge_audit(0) >= 1 and r.audit.records == []
     with pytest.raises(ValueError):
         r.purge_audit(-1)

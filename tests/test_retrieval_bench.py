@@ -85,7 +85,7 @@ def report():
 
 
 def test_the_report_names_its_inputs_and_what_it_did_not_measure(report):
-    assert report["dataset"]["sha256"] == json.loads((B.BASELINE_PATH).read_text())["dataset_sha256"]
+    assert report["dataset"]["sha256"] == json.loads((B.BASELINE_PATH).read_text(encoding="utf-8"))["dataset_sha256"]
     assert report["components"]["embedder"] == "HashingEmbedder"
     assert "not production" in report["caveat"] or "not production retrieval quality" in report["caveat"]
     assert any("token" in item for item in report["not_measured"])

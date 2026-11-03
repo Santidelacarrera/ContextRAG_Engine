@@ -48,7 +48,7 @@ def vault(tmp_path):
     for name, text in VAULT.items():
         f = tmp_path / name
         f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text(text, encoding="utf-8")
+        f.write_text(text, encoding="utf-8", newline="\n")
     rag = factory.offline()
     done = rag.ingestor.ingest_path(tmp_path, tenant="nexus")
     return rag, tmp_path, done

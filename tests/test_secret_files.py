@@ -24,6 +24,10 @@ def test_keys_are_read_from_files_with_a_trailing_newline_removed(tmp_path):
     TenantCipher(primary, previous)  # usable as-is
 
 
+posix_only = pytest.mark.skipif(os.name != "posix", reason="Windows has no POSIX mode bits")
+
+
+@posix_only
 def test_a_key_file_readable_by_others_is_refused_and_the_key_is_not_in_the_message(tmp_path):
     env = {"MASTER_KEY_FILE": secret(tmp_path, "k", KEY, mode=0o644)}
     with pytest.raises(ValueError, match="must not be readable") as info:
@@ -31,6 +35,7 @@ def test_a_key_file_readable_by_others_is_refused_and_the_key_is_not_in_the_mess
     assert KEY not in str(info.value)
 
 
+@posix_only
 def test_a_group_readable_file_is_refused_too(tmp_path):
     with pytest.raises(ValueError, match="must not be readable"):
         load_master_keys({"MASTER_KEY_FILE": secret(tmp_path, "k", KEY, mode=0o640)})
@@ -63,6 +68,7 @@ def test_the_factory_builds_the_cipher_from_a_file(tmp_path, monkeypatch):
     rag.close()
 
 
+@posix_only
 def test_rotate_key_uses_the_same_loader(tmp_path, monkeypatch, capsys):
     from contextrag.__main__ import main
 

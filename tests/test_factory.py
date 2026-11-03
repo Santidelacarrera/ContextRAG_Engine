@@ -44,10 +44,10 @@ def test_from_env_with_master_key_uses_encrypted_qdrant(monkeypatch):
 
 def test_ingest_path_walks_directories_and_skips_hidden_and_binary(tmp_path):
     (tmp_path / "docs").mkdir()
-    (tmp_path / "docs" / "a.md").write_text("# A\n\nLa contraseña caduca cada 90 días.")
-    (tmp_path / "src.py").write_text("def f():\n    return 1\n")
+    (tmp_path / "docs" / "a.md").write_text("# A\n\nLa contraseña caduca cada 90 días.", encoding="utf-8", newline="\n")
+    (tmp_path / "src.py").write_text("def f():\n    return 1\n", encoding="utf-8", newline="\n")
     (tmp_path / ".git").mkdir()
-    (tmp_path / ".git" / "config.txt").write_text("secret")
+    (tmp_path / ".git" / "config.txt").write_text("secret", encoding="utf-8", newline="\n")
     (tmp_path / "image.png").write_bytes(b"\x89PNG")
     rag = factory.offline()
     done = rag.ingestor.ingest_path(tmp_path, tenant="t")
@@ -62,7 +62,7 @@ def test_cli_ask_and_eval(tmp_path, capsys):
 
     from contextrag.__main__ import main
 
-    (tmp_path / "p.md").write_text("# Retención\n\nLos registros de auditoría se conservan durante 7 años.")
+    (tmp_path / "p.md").write_text("# Retención\n\nLos registros de auditoría se conservan durante 7 años.", encoding="utf-8", newline="\n")
     assert main(["ask", "¿Cuánto se conservan los registros de auditoría?", "--tenant", "t", "--docs", str(tmp_path)]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["status"] == "verified" and "7 años" in out["claims"][0]["evidence"]["text"]

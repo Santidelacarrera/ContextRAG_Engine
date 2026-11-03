@@ -1,5 +1,6 @@
 """Calibration: selection policies, insufficient-data flags, CLI exit codes, and no writes beyond the requested paths."""
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -166,7 +167,7 @@ def test_the_bundled_fixture_is_labelled_as_a_fixture_not_as_supplied_data(tmp_p
 # ---- RAGAS CLI -------------------------------------------------------------------------------------------
 
 def test_the_ragas_command_refuses_to_run_without_a_configured_judge(tmp_path):
-    env = {"PATH": "/usr/bin:/bin", "PYTHONPATH": str(ROOT)}
+    env = {"PATH": "/usr/bin:/bin", "PYTHONPATH": str(ROOT), **({"SYSTEMROOT": os.environ["SYSTEMROOT"]} if "SYSTEMROOT" in os.environ else {})}
     r = subprocess.run([sys.executable, "-m", "contextrag", "ragas", "--cases", str(FIXTURE_CASES),
                         "--out", str(tmp_path / "r.json")], capture_output=True, text=True, env=env, cwd=ROOT)
     assert r.returncode == 2 and "RAGAS_PROVIDER" in r.stderr

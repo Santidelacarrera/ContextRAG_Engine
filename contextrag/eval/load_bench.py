@@ -17,7 +17,6 @@ from __future__ import annotations
 import os
 import platform
 import random
-import resource
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -30,6 +29,14 @@ from .retrieval_bench import TENANT, latency_summary, load_dataset
 
 CAVEAT = ("In-process, offline stack, one machine, threads sharing one interpreter lock. A comparison tool for two runs on "
           "the same machine; not the capacity of a deployment and not evidence about production models.")
+
+
+def _peak_rss_mb() -> float | None:
+    try:
+        import resource
+    except ImportError:  # Windows
+        return None
+    return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1)  # type: ignore[attr-defined,unused-ignore]
 
 
 def _worker_setup(dataset: str | Path = DATA_PATH, with_cache: bool = False):
@@ -108,7 +115,7 @@ def run_load(levels: tuple[int, ...] = (1, 4, 8, 16), requests: int = 400, seed:
             "answer_cache": with_cache,
             "read_only": read_only,
             "mixed_read_write": {"ingest_every": mixed_ingest_every, "levels": mixed} if mixed_ingest_every else None,
-            "peak_rss_mb": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1),  # whole process, Linux
+            "peak_rss_mb": _peak_rss_mb(),  # whole process; None where the OS has no getrusage
             "not_measured": ["HTTP and serialisation overhead", "network and database latency", "real models",
                              "multi-process deployment", "sustained load over time", "memory growth over hours"],
         }
