@@ -15,7 +15,7 @@ contextrag = "contextrag.__main__:main"
 
 [project.optional-dependencies]
 api = ["fastapi>=0.110", "uvicorn>=0.27"]
-qdrant = ["qdrant-client>=1.10"]
+qdrant = ["qdrant-client>=1.10,<1.14"]
 redis = ["redis>=5"]
 models = ["sentence-transformers>=3.0", "transformers>=4.40", "torch"]
 cohere = ["cohere>=5"]
