@@ -327,7 +327,7 @@ se sobrescribe por entorno y se documenta. Comprobado con `docker compose config
 | Estado | Elemento |
 |---|---|
 | Verificado | Suite: **800 pruebas pasando, 3 omitidas** (torch, transformers y RAGAS en vivo, no disponibles). `ruff check .` sin errores (`build/` excluido, ver abajo). `mypy contextrag --ignore-missing-imports` sin errores en 61 ficheros. `bandit -r contextrag` 0 hallazgos. pip-audit sobre dependencias base: sin vulnerabilidades conocidas; sobre extras: 2 vulnerabilidades sin corrección publicada (ver sección 9). |
-| Pendiente de decisión | `build/` está versionado (31 ficheros), es salida de setuptools y no lo usa CI, el Dockerfile ni el empaquetado. Ruff lo excluye y `.gitignore` lo ignora desde ahora. **No se ha eliminado del repositorio**: eso es una decisión del propietario. |
+| Resuelto | `build/` (salida de setuptools, 31 ficheros) se quitó del índice de git y sigue ignorado; no afecta a CI, Dockerfile ni empaquetado. |
 | Verificado con infraestructura real local | Redis 7 (caché; caída con snapshot guardado y recuperación; una invalidación perdida durante la caída no devuelve la respuesta antigua); PostgreSQL 16 (auditoría con RLS, retención, roles). |
 | Parcialmente verificado | `docker-compose`: la configuración se valida y falla sin secretos; **no se ha levantado** (no hay daemon). Qdrant servidor: no hay binario; las pruebas usan el modo en memoria. |
 | No verificado | Modelos reales (BGE, DeBERTa, Cohere, Anthropic, Ollama); juez RAGAS; calibración con documentos reales; contradicciones semánticas; gestión de secretos del despliegue; TLS; integración con un proveedor de identidad. |
