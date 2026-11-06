@@ -6,6 +6,7 @@ import argparse
 import dataclasses
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -36,6 +37,11 @@ def main(argv: list[str] | None = None) -> int:
     k.add_argument("--groups", default="", help="comma-separated ACL groups")
     k.add_argument("--add-to", type=Path, help="keys file to create/update (CONTEXTRAG_KEYS_FILE)")
     k.add_argument("--expires-in-days", type=float, help="the key stops working after this many days (recommended)")
+
+    ks = sub.add_parser("keys", help="list or revoke entries of a keys file (never prints keys or digests)")
+    ks.add_argument("action", choices=["list", "revoke"])
+    ks.add_argument("--file", type=Path, required=True, help="keys file (CONTEXTRAG_KEYS_FILE)")
+    ks.add_argument("--id", help="revoke: label of the key(s) to remove")
 
     x = sub.add_parser("erase", help="irreversibly delete ALL data of a tenant (documents, vectors, cache, audit)")
     x.add_argument("--tenant", required=True)
@@ -109,7 +115,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "keygen":
-        import os
 
         from .api.auth import KeyStore, new_entry
 
@@ -131,6 +136,27 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(json.dumps({digest: entry}, indent=2), file=sys.stderr)
         print(key)  # shown once; only its SHA-256 is stored
+        return 0
+
+    if args.cmd == "keys":
+        if not args.file.exists():
+            print(f"keys: {args.file} does not exist", file=sys.stderr)
+            return 2
+        entries = json.loads(args.file.read_text())
+        if args.action == "list":
+            for e in entries.values():
+                print(json.dumps({k: e.get(k) for k in ("id", "tenant", "role", "groups", "expires_at")}, ensure_ascii=False))
+            return 0
+        if not args.id:
+            print("keys revoke: --id is required", file=sys.stderr)
+            return 2
+        kept = {d: e for d, e in entries.items() if e.get("id") != args.id}
+        if len(kept) == len(entries):
+            print(f"keys revoke: no key with id {args.id!r}", file=sys.stderr)
+            return 1
+        args.file.write_text(json.dumps(kept, indent=2))
+        os.chmod(args.file, 0o600)
+        print(json.dumps({"revoked": len(entries) - len(kept)}))  # the running server reloads the file on change
         return 0
 
     from . import factory
@@ -168,7 +194,6 @@ def main(argv: list[str] | None = None) -> int:
         return _run_calibrate(args)
 
     if args.cmd == "memory-migrate":
-        import os
 
         from .core.security import TenantCipher
         from .memory.store import ConversationStore
@@ -185,7 +210,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "retention":
-        import os
 
         import psycopg
 
