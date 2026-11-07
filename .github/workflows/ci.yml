@@ -11,7 +11,7 @@ jobs:
       matrix:
         python: ["3.10", "3.12"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
@@ -32,7 +32,7 @@ jobs:
     # real transformers / sentence-transformers / torch code paths, exercised with tiny local random-weight models
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -44,7 +44,7 @@ jobs:
     # known-vulnerability scan of the runtime dependencies (no dev tools), resolved fresh from the extras
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -55,7 +55,7 @@ jobs:
     # builds the image and brings up the real stack (Qdrant, PostgreSQL, Redis, API); ingest + verified query end to end
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -85,7 +85,7 @@ jobs:
     # vulnerability scan of the built API image; fails on fixable HIGH/CRITICAL findings
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: docker build -f deploy/Dockerfile -t contextrag-api:ci .
       - name: Trivy
         run: |
