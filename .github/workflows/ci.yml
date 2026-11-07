@@ -50,3 +50,43 @@ jobs:
           python-version: "3.12"
       - run: pip install -e ".[api,pdf,security,memory,postgres,qdrant,redis]" pip-audit
       - run: pip-audit --local --skip-editable
+
+  compose-smoke:
+    # builds the image and brings up the real stack (Qdrant, PostgreSQL, Redis, API); ingest + verified query end to end
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - name: Secrets and keys for a throwaway stack
+        run: |
+          r() { python -c "import secrets;print(secrets.token_hex(16))"; }
+          { echo "QDRANT_API_KEY=$(r)"; echo "POSTGRES_PASSWORD=$(r)"; echo "APP_DB_PASSWORD=$(r)"; echo "REDIS_PASSWORD=$(r)";
+            echo "MASTER_KEY=$(r)"; echo "CONTEXTRAG_KEYS_FILE=/run/keys.json";
+            echo "CONTEXTRAG_KEYS_HOST_FILE=$RUNNER_TEMP/keys.json"; } > "$RUNNER_TEMP/stack.env"
+          python -m contextrag keygen --id smoke --tenant acme --role admin --add-to "$RUNNER_TEMP/keys.json" > "$RUNNER_TEMP/key"
+          chmod 644 "$RUNNER_TEMP/keys.json"   # the container user (uid 10001) must be able to read it
+      - run: docker compose --env-file "$RUNNER_TEMP/stack.env" -f deploy/docker-compose.yml up -d --build --wait --wait-timeout 180
+      - name: Ingest and query
+        run: |
+          K=$(cat "$RUNNER_TEMP/key")
+          curl -fsS localhost:8000/healthz
+          curl -fsS -X POST localhost:8000/ingest -H "X-API-Key: $K" -H 'content-type: application/json' \
+            -d '{"documents":[{"doc_id":"d1","text":"Las claves de API se rotan cada 30 dias."}]}'
+          curl -fsS -X POST localhost:8000/query -H "X-API-Key: $K" -H 'content-type: application/json' \
+            -d '{"question":"Cada cuanto se rotan las claves de API?"}' | tee out.json
+          grep -q '"status":"verified"' out.json
+      - if: failure()
+        run: docker compose --env-file "$RUNNER_TEMP/stack.env" -f deploy/docker-compose.yml logs --tail 80
+
+  image-scan:
+    # vulnerability scan of the built API image; fails on fixable HIGH/CRITICAL findings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f deploy/Dockerfile -t contextrag-api:ci .
+      - name: Trivy
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.65.0 image             --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --quiet contextrag-api:ci
